@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>✅ Client is working!</h1>
+    <p>If you can see this, the client server is running correctly.</p>
+    <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/login">Login</a></li>
+        <li><a href="/player">Player</a></li>
+    </ul>
+    <hr>
+    <h2>Test API Connection</h2>
+    <button onclick="testServer()">Test Server Connection</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testServer() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing server...\n';
+
+            try {
+                const res = await fetch('http://localhost:8000/health');
+                const data = await res.json();
+                output.textContent += 'Server Response: ' + JSON.stringify(data, null, 2);
+            } catch (err) {
+                output.textContent += 'Error: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>

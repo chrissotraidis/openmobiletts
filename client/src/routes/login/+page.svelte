@@ -2,11 +2,11 @@
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
 
-	let username = '';
-	let password = '';
-	let error = '';
-	let loading = false;
-	let debugInfo = '';
+	let username = $state('');
+	let password = $state('');
+	let error = $state('');
+	let loading = $state(false);
+	let debugInfo = $state('');
 
 	async function testAPI() {
 		debugInfo = 'Testing API connection...';
@@ -73,7 +73,7 @@
 				<p class="text-gray-600">Sign in to continue</p>
 			</div>
 
-			<form on:submit|preventDefault={handleLogin} class="space-y-6">
+			<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }} class="space-y-6">
 				{#if error}
 					<div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
 						{error}
@@ -114,7 +114,7 @@
 					{loading ? 'Signing in...' : 'Sign In'}
 				</button>
 
-				<button type="button" on:click={testAPI} class="btn btn-secondary w-full">
+				<button type="button" onclick={testAPI} class="btn btn-secondary w-full">
 					Test API Connection
 				</button>
 			</form>
