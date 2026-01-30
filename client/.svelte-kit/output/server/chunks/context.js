@@ -45,9 +45,9 @@ function get_parent_context(ssr_context2) {
 }
 export {
   ssr_context as a,
-  set_ssr_context as b,
-  pop as c,
+  pop as b,
+  setContext as c,
   getContext as g,
   push as p,
-  setContext as s
+  set_ssr_context as s
 };

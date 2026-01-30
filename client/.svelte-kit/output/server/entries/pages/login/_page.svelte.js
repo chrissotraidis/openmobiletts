@@ -1,4 +1,4 @@
-import { a as attr } from "../../../chunks/attributes.js";
+import { b as attr } from "../../../chunks/attributes.js";
 import { e as escape_html } from "../../../chunks/escaping.js";
 import "@sveltejs/kit/internal";
 import "../../../chunks/exports.js";
@@ -15,7 +15,11 @@ function _page($$renderer, $$props) {
     {
       $$renderer2.push("<!--[!-->");
     }
-    $$renderer2.push(`<!--]--> <div><label for="username" class="block text-sm font-medium text-gray-700 mb-2">Username</label> <input id="username" type="text"${attr("value", username)} required${attr("disabled", loading, true)} class="input" placeholder="Enter your username"/></div> <div><label for="password" class="block text-sm font-medium text-gray-700 mb-2">Password</label> <input id="password" type="password"${attr("value", password)} required${attr("disabled", loading, true)} class="input" placeholder="Enter your password"/></div> <button type="submit"${attr("disabled", loading, true)} class="btn btn-primary w-full">${escape_html("Sign In")}</button></form></div> <p class="text-center text-gray-600 text-sm mt-6">Private text-to-speech platform</p></div></div>`);
+    $$renderer2.push(`<!--]--> <div><label for="username" class="block text-sm font-medium text-gray-700 mb-2">Username</label> <input id="username" type="text"${attr("value", username)} required${attr("disabled", loading, true)} class="input" placeholder="admin"/></div> <div><label for="password" class="block text-sm font-medium text-gray-700 mb-2">Password</label> <input id="password" type="password"${attr("value", password)} required${attr("disabled", loading, true)} class="input" placeholder="testpassword123"/></div> <button type="submit"${attr("disabled", loading, true)} class="btn btn-primary w-full">${escape_html("Sign In")}</button> <button type="button" class="btn btn-secondary w-full">Test API Connection</button></form> `);
+    {
+      $$renderer2.push("<!--[!-->");
+    }
+    $$renderer2.push(`<!--]--></div></div></div>`);
   });
 }
 export {

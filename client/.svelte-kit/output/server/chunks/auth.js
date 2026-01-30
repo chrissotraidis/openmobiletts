@@ -8,10 +8,10 @@ function createAuthStore() {
   return {
     subscribe,
     setToken: (token) => {
-      update(() => ({ token, isAuthenticated: true }));
+      set({ token, isAuthenticated: true });
     },
     clearToken: () => {
-      update(() => ({ token: null, isAuthenticated: false }));
+      set({ token: null, isAuthenticated: false });
     }
   };
 }

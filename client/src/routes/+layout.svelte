@@ -1,8 +1,10 @@
 <script>
 	import '../app.css';
-	import { onMount } from 'svelte';
+
+	let { children } = $props();
 
 	// Register service worker for PWA - DISABLED FOR NOW
+	// import { onMount } from 'svelte';
 	// onMount(() => {
 	// 	if ('serviceWorker' in navigator) {
 	// 		navigator.serviceWorker
@@ -14,5 +16,5 @@
 </script>
 
 <div class="min-h-screen flex flex-col">
-	<slot />
+	{@render children()}
 </div>

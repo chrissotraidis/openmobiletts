@@ -142,8 +142,8 @@ function to_style(value, styles) {
   return value == null ? null : String(value);
 }
 export {
-  attr as a,
-  to_style as b,
+  to_class as a,
+  attr as b,
   clsx as c,
-  to_class as t
+  to_style as t
 };

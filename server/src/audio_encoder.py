@@ -74,14 +74,23 @@ class AudioEncoder:
             parameters=[
                 '-ar', str(self.sample_rate),  # Sample rate
                 '-ac', str(self.channels),     # Channels
-                '-q:a', '2',                    # Quality (0-9, lower is better)
+                '-write_xing', '0',             # No Xing/LAME header (for streaming concat)
+                '-id3v2_version', '0',          # No ID3v2 tag
             ],
         )
 
-        # Calculate duration
-        duration = len(audio_data) / source_sample_rate
+        mp3_bytes = mp3_buffer.getvalue()
 
-        return mp3_buffer.getvalue(), duration
+        # Calculate duration from actual MP3 bytes using CBR formula.
+        # Using raw audio samples (len(audio_data) / source_sample_rate) causes
+        # drift because each independently-encoded MP3 segment includes frame
+        # padding. Over many segments, the cumulative timing metadata diverges
+        # from the browser's actual playback position. CBR byte-based duration
+        # reflects what the browser will actually decode and play.
+        bitrate_bps = int(self.bitrate.replace('k', '000'))
+        duration = (len(mp3_bytes) * 8) / bitrate_bps
+
+        return mp3_bytes, duration
 
 
 class StreamingAudioEncoder(AudioEncoder):

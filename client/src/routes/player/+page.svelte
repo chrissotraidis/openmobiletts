@@ -8,8 +8,8 @@
 	import TextDisplay from '$lib/components/TextDisplay.svelte';
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
 
-	let isAuthenticated = false;
-	let isIOS = false;
+	let isAuthenticated = $state(false);
+	let isIOS = $state(false);
 
 	onMount(() => {
 		if (browser) {
@@ -38,7 +38,7 @@
 		<header class="bg-white shadow-sm border-b border-gray-200">
 			<div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
 				<h1 class="text-2xl font-bold text-primary-600">Open Mobile TTS</h1>
-				<button on:click={handleLogout} class="btn btn-secondary text-sm">
+				<button onclick={handleLogout} class="btn btn-secondary text-sm">
 					Logout
 				</button>
 			</div>
