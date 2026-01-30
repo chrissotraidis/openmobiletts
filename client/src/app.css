@@ -8,7 +8,12 @@
 	}
 
 	body {
-		@apply bg-gray-50 text-gray-900;
+		@apply bg-[#0a0c10] text-slate-200;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	}
+
+	::selection {
+		@apply bg-blue-500/30;
 	}
 }
 
@@ -16,25 +21,25 @@
 	/* Mobile-first button styles */
 	.btn {
 		@apply px-6 py-3 rounded-lg font-medium transition-colors;
-		@apply min-h-[44px] min-w-[44px]; /* iOS touch target minimum */
+		@apply min-h-[44px] min-w-[44px];
 		@apply active:scale-95 transform;
 	}
 
 	.btn-primary {
-		@apply bg-primary-600 text-white hover:bg-primary-700;
-		@apply disabled:bg-gray-300 disabled:cursor-not-allowed;
+		@apply bg-blue-600 text-white hover:bg-blue-700;
+		@apply disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed;
 	}
 
 	.btn-secondary {
-		@apply bg-gray-200 text-gray-900 hover:bg-gray-300;
+		@apply bg-white/5 text-slate-300 hover:bg-white/10;
 	}
 
 	/* Form inputs optimized for mobile */
 	.input {
-		@apply w-full px-4 py-3 rounded-lg border border-gray-300;
-		@apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
-		@apply min-h-[44px];
-		@apply text-base; /* Prevents iOS zoom on focus */
+		@apply w-full px-4 py-3 rounded-xl border border-white/10 bg-slate-900/40;
+		@apply focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-transparent;
+		@apply min-h-[44px] text-slate-200;
+		@apply text-base;
 	}
 
 	/* Text highlighting for synchronized playback */
@@ -43,6 +48,55 @@
 	}
 
 	.text-segment.highlighted {
-		@apply bg-primary-200 font-medium;
+		@apply bg-blue-500/20 text-blue-200 font-medium rounded px-0.5;
+	}
+
+	/* Custom scrollbar */
+	.custom-scrollbar::-webkit-scrollbar {
+		width: 4px;
+	}
+	.custom-scrollbar::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.custom-scrollbar::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 10px;
+	}
+
+	@media (min-width: 768px) {
+		.custom-scrollbar::-webkit-scrollbar {
+			width: 8px;
+		}
+	}
+
+	/* Range slider styling */
+	input[type="range"] {
+		@apply w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer;
+	}
+	input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		background: #3b82f6;
+		border-radius: 50%;
+		cursor: pointer;
+		border: 2px solid #0a0c10;
+	}
+	input[type="range"]::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		background: #3b82f6;
+		border-radius: 50%;
+		cursor: pointer;
+		border: 2px solid #0a0c10;
+	}
+
+	/* Select dropdown styling */
+	select {
+		@apply bg-slate-900 border border-white/10 rounded-xl text-slate-200;
+	}
+	select option {
+		@apply bg-slate-900 text-slate-200;
 	}
 }

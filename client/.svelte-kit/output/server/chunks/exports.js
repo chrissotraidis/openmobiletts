@@ -1,4 +1,4 @@
-import { n as noop, l as safe_not_equal } from "./equality.js";
+import { $ as noop, u as untrack, a3 as safe_not_equal } from "./runtime.js";
 import "clsx";
 const SCHEME = /^[a-z][a-z\d+\-.]+:/i;
 const internal = new URL("sveltekit-internal://");
@@ -97,6 +97,20 @@ function allow_nodejs_console_log(url) {
     };
   }
 }
+function subscribe_to_store(store, run, invalidate) {
+  if (store == null) {
+    run(void 0);
+    return noop;
+  }
+  const unsub = untrack(
+    () => store.subscribe(
+      run,
+      // @ts-expect-error
+      invalidate
+    )
+  );
+  return unsub.unsubscribe ? () => unsub.unsubscribe() : unsub;
+}
 const subscriber_queue = [];
 function readable(value, start) {
   return {
@@ -149,6 +163,11 @@ function writable(value, start = noop) {
     };
   }
   return { set, update, subscribe };
+}
+function get(store) {
+  let value;
+  subscribe_to_store(store, (_) => value = _)();
+  return value;
 }
 function validator(expected) {
   function validate(module, file) {
@@ -223,6 +242,7 @@ export {
   resolve as f,
   decode_pathname as g,
   validate_server_exports as h,
+  get as i,
   make_trackable as m,
   normalize_path as n,
   readable as r,

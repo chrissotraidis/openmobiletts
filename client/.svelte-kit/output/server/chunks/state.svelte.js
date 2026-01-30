@@ -1,5 +1,5 @@
 import "clsx";
-import { n as noop } from "./equality.js";
+import { $ as noop } from "./runtime.js";
 import "@sveltejs/kit/internal/server";
 const is_legacy = noop.toString().includes("$$") || /function \w+\(\) \{\}/.test(noop.toString());
 if (is_legacy) {
