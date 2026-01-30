@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	html {
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	body {
+		@apply bg-gray-50 text-gray-900;
+	}
+}
+
+@layer components {
+	/* Mobile-first button styles */
+	.btn {
+		@apply px-6 py-3 rounded-lg font-medium transition-colors;
+		@apply min-h-[44px] min-w-[44px]; /* iOS touch target minimum */
+		@apply active:scale-95 transform;
+	}
+
+	.btn-primary {
+		@apply bg-primary-600 text-white hover:bg-primary-700;
+		@apply disabled:bg-gray-300 disabled:cursor-not-allowed;
+	}
+
+	.btn-secondary {
+		@apply bg-gray-200 text-gray-900 hover:bg-gray-300;
+	}
+
+	/* Form inputs optimized for mobile */
+	.input {
+		@apply w-full px-4 py-3 rounded-lg border border-gray-300;
+		@apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+		@apply min-h-[44px];
+		@apply text-base; /* Prevents iOS zoom on focus */
+	}
+
+	/* Text highlighting for synchronized playback */
+	.text-segment {
+		@apply transition-colors duration-200;
+	}
+
+	.text-segment.highlighted {
+		@apply bg-primary-200 font-medium;
+	}
+}

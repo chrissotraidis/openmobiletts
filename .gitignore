@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+env/
+ENV/
+.venv
+
+# FastAPI / Uvicorn
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Node / JavaScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+.cache/
+.parcel-cache/
+.next/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Audio files (generated TTS)
+*.mp3
+*.wav
+*.m4a
+
+# Uploaded documents
+uploads/
+*.pdf
+*.docx
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Model cache
+.cache/
+models/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
