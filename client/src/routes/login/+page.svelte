@@ -1,33 +1,18 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
+	import { Mic, Loader2 } from 'lucide-svelte';
 
 	let username = $state('');
 	let password = $state('');
 	let error = $state('');
 	let loading = $state(false);
-	let debugInfo = $state('');
-
-	async function testAPI() {
-		debugInfo = 'Testing API connection...';
-		try {
-			const res = await fetch('http://localhost:8000/health');
-			const data = await res.json();
-			debugInfo = 'API works! ' + JSON.stringify(data);
-		} catch (err) {
-			debugInfo = 'API Error: ' + err.message;
-		}
-	}
 
 	async function handleLogin() {
 		error = '';
-		debugInfo = '';
 		loading = true;
 
-		console.log('Login attempt:', username);
-
 		try {
-			// Direct fetch to login endpoint
 			const response = await fetch('http://localhost:8000/token', {
 				method: 'POST',
 				headers: {
@@ -39,16 +24,11 @@
 				})
 			});
 
-			console.log('Response status:', response.status);
-
 			if (!response.ok) {
-				const errorText = await response.text();
-				console.error('Login failed:', errorText);
 				throw new Error('Invalid username or password');
 			}
 
 			const data = await response.json();
-			console.log('Login success:', data);
 
 			if (data.access_token) {
 				authStore.setToken(data.access_token);
@@ -57,7 +37,6 @@
 				throw new Error('No access token received');
 			}
 		} catch (err) {
-			console.error('Error:', err);
 			error = err.message || 'Login failed';
 		} finally {
 			loading = false;
@@ -65,23 +44,28 @@
 	}
 </script>
 
-<div class="min-h-screen flex items-center justify-center px-4 bg-gradient-to-br from-primary-50 to-blue-100">
+<div class="min-h-screen flex items-center justify-center px-4 bg-[#0a0c10]">
 	<div class="w-full max-w-md">
-		<div class="bg-white rounded-2xl shadow-xl p-8">
+		<div class="bg-slate-900/60 border border-white/10 rounded-2xl shadow-2xl p-8">
 			<div class="text-center mb-8">
-				<h1 class="text-3xl font-bold text-primary-600 mb-2">Open Mobile TTS</h1>
-				<p class="text-gray-600">Sign in to continue</p>
+				<div class="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-600/20">
+					<Mic size={28} class="text-white" />
+				</div>
+				<h1 class="text-2xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent mb-2">
+					Open Mobile TTS
+				</h1>
+				<p class="text-slate-500 text-sm">Sign in to your local instance</p>
 			</div>
 
-			<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }} class="space-y-6">
+			<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }} class="space-y-5">
 				{#if error}
-					<div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+					<div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-sm">
 						{error}
 					</div>
 				{/if}
 
-				<div>
-					<label for="username" class="block text-sm font-medium text-gray-700 mb-2">
+				<div class="space-y-2">
+					<label for="username" class="block text-xs font-bold text-slate-500 uppercase tracking-widest">
 						Username
 					</label>
 					<input
@@ -91,12 +75,12 @@
 						required
 						disabled={loading}
 						class="input"
-						placeholder="admin"
+						placeholder="Enter username"
 					/>
 				</div>
 
-				<div>
-					<label for="password" class="block text-sm font-medium text-gray-700 mb-2">
+				<div class="space-y-2">
+					<label for="password" class="block text-xs font-bold text-slate-500 uppercase tracking-widest">
 						Password
 					</label>
 					<input
@@ -106,24 +90,27 @@
 						required
 						disabled={loading}
 						class="input"
-						placeholder="testpassword123"
+						placeholder="Enter password"
 					/>
 				</div>
 
-				<button type="submit" disabled={loading} class="btn btn-primary w-full">
-					{loading ? 'Signing in...' : 'Sign In'}
-				</button>
-
-				<button type="button" onclick={testAPI} class="btn btn-secondary w-full">
-					Test API Connection
+				<button
+					type="submit"
+					disabled={loading}
+					class="w-full py-4 rounded-2xl font-bold text-base transition-all duration-300 flex items-center justify-center gap-3 active:scale-[0.98] {loading ? 'bg-slate-800 text-slate-500' : 'bg-blue-600 shadow-lg shadow-blue-600/20 text-white hover:bg-blue-500'}"
+				>
+					{#if loading}
+						<Loader2 size={20} class="animate-spin" />
+						<span>Signing in...</span>
+					{:else}
+						<span>Sign In</span>
+					{/if}
 				</button>
 			</form>
-
-			{#if debugInfo}
-				<div class="mt-4 p-3 bg-gray-100 rounded text-xs">
-					{debugInfo}
-				</div>
-			{/if}
 		</div>
+
+		<p class="text-center text-[10px] text-slate-600 mt-6 uppercase tracking-widest">
+			Private Local Instance
+		</p>
 	</div>
 </div>
