@@ -1,22 +1,35 @@
 # Open Mobile TTS
 
-A private, local text-to-speech app. Single process, no authentication, no cloud.
+A private, local text-to-speech app. Clone it, run it, done — no cloud, no API keys, no accounts.
 
 ## Quick Start
 
 ```bash
-# Install Python dependencies
-cd server && pip install -r requirements.txt && cd ..
-
-# Install and build the UI
-cd client && npm install && npm run build && cd ..
-
-# Run
+git clone <repo-url>
+cd openmobiletts
 python run.py
 # Opens at http://localhost:8000
 ```
 
-**Prerequisites:** Python 3.9-3.12, Node.js 18+, espeak-ng (`apt install espeak-ng`), ffmpeg
+That's it. `run.py` checks your system, installs dependencies, builds the UI, and starts the server. On first launch, the Kokoro TTS model (~320 MB) downloads automatically and is cached for future runs.
+
+### System Requirements
+
+| Requirement | Version | Install |
+|---|---|---|
+| Python | 3.9 – 3.12 | [python.org](https://www.python.org/downloads/) |
+| Node.js | 18+ | [nodejs.org](https://nodejs.org/) |
+| espeak-ng | any | `sudo apt install espeak-ng` / `brew install espeak-ng` |
+| ffmpeg | any | `sudo apt install ffmpeg` / `brew install ffmpeg` |
+
+`run.py` will tell you exactly what's missing and how to install it.
+
+### Docker
+
+```bash
+docker compose up --build
+# Opens at http://localhost:8000
+```
 
 ## Features
 
@@ -58,11 +71,16 @@ For hot-reload during development, run the server and client separately:
 
 ```bash
 # Terminal 1: API server with auto-reload
-cd server && uvicorn src.main:app --reload --port 8000
+cd server && pip install -r requirements.txt
+uvicorn src.main:app --reload --port 8000
 
 # Terminal 2: Vite dev server (proxies /api/* to port 8000)
-cd client && npm run dev
+cd client && npm install && npm run dev
 ```
+
+## Configuration
+
+Copy `server/.env.example` to `server/.env` to customize settings. All settings have sensible defaults — no `.env` file is required for basic usage.
 
 ## Performance
 

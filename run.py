@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-Open Mobile TTS — Single-app launcher.
+Open Mobile TTS — Single-command launcher.
 
-Starts the TTS server which also serves the web UI.
-Run:  python run.py
-Then open: http://localhost:8000
+Clone, run, done:
+    git clone <repo>
+    cd openmobiletts
+    python run.py
+
+Checks all dependencies, installs what's needed, builds the UI, and starts
+the server at http://localhost:8000
 """
 
 import os
+import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,43 +22,201 @@ ROOT = Path(__file__).parent
 SERVER_DIR = ROOT / "server"
 CLIENT_DIR = ROOT / "client"
 CLIENT_BUILD = CLIENT_DIR / "build"
+REQUIREMENTS = SERVER_DIR / "requirements.txt"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _bold(text: str) -> str:
+    """Return text wrapped in ANSI bold if stdout is a terminal."""
+    if sys.stdout.isatty():
+        return f"\033[1m{text}\033[0m"
+    return text
+
+
+def _fail(message: str):
+    """Print an error and exit."""
+    print(f"\n  ERROR: {message}\n", file=sys.stderr)
+    sys.exit(1)
+
+
+def _run(cmd, **kwargs):
+    """Run a command, streaming output to the terminal."""
+    return subprocess.run(cmd, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Dependency checks
+# ---------------------------------------------------------------------------
+
+def check_python_version():
+    """Ensure Python 3.9 – 3.12."""
+    v = sys.version_info
+    if v < (3, 9) or v >= (3, 13):
+        _fail(
+            f"Python 3.9-3.12 required (found {v.major}.{v.minor}.{v.micro}).\n"
+            "  Install a supported version: https://www.python.org/downloads/"
+        )
+    print(f"  Python {v.major}.{v.minor}.{v.micro}")
+
+
+def check_system_deps():
+    """Check for espeak-ng and ffmpeg."""
+    missing = []
+
+    if not shutil.which("espeak-ng"):
+        missing.append("espeak-ng")
+    else:
+        print("  espeak-ng found")
+
+    if not shutil.which("ffmpeg"):
+        missing.append("ffmpeg")
+    else:
+        print("  ffmpeg found")
+
+    if missing:
+        names = " and ".join(missing)
+        system = platform.system()
+        if system == "Linux":
+            hint = f"sudo apt-get install {' '.join(missing)}"
+        elif system == "Darwin":
+            hint = f"brew install {' '.join(missing)}"
+        else:
+            hint = f"Install {names} and make sure they are on your PATH"
+        _fail(f"{names} not found.\n  Install: {hint}")
+
+
+def check_node():
+    """Ensure Node.js 18+ is installed."""
+    node = shutil.which("node")
+    if not node:
+        _fail(
+            "Node.js not found.\n"
+            "  Install Node.js 18+: https://nodejs.org/"
+        )
+
+    try:
+        result = subprocess.run(
+            ["node", "--version"], capture_output=True, text=True, check=True
+        )
+        version_str = result.stdout.strip().lstrip("v")
+        major = int(version_str.split(".")[0])
+        if major < 18:
+            _fail(
+                f"Node.js 18+ required (found v{version_str}).\n"
+                "  Update: https://nodejs.org/"
+            )
+        print(f"  Node.js v{version_str}")
+    except (subprocess.CalledProcessError, ValueError):
+        print("  Node.js found (could not parse version)")
+
+
+# ---------------------------------------------------------------------------
+# Setup steps
+# ---------------------------------------------------------------------------
+
+def install_pip_deps():
+    """Install Python dependencies from requirements.txt if needed."""
+    # Quick check: try importing the heaviest dependency
+    try:
+        import kokoro  # noqa: F401
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+        return  # Already installed
+    except ImportError:
+        pass
+
+    print("\n  Installing Python dependencies...")
+    print(f"  (from {REQUIREMENTS})\n")
+
+    result = _run(
+        [sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS)],
+    )
+    if result.returncode != 0:
+        _fail("pip install failed. Check the output above for details.")
+
+    print("\n  Python dependencies installed.\n")
 
 
 def build_client():
     """Build the SvelteKit client if not already built."""
     if CLIENT_BUILD.exists() and (CLIENT_BUILD / "index.html").exists():
-        return True
+        print("  Client already built.")
+        return
 
-    print("Building client...")
+    npm = shutil.which("npm")
+    if not npm:
+        _fail("npm not found. Install Node.js 18+: https://nodejs.org/")
+
     if not (CLIENT_DIR / "node_modules").exists():
-        print("  Installing npm dependencies...")
-        subprocess.run(["npm", "install"], cwd=CLIENT_DIR, check=True)
+        print("\n  Installing npm dependencies...")
+        print("  (this may take a minute on first run)\n")
+        result = _run(["npm", "install"], cwd=CLIENT_DIR)
+        if result.returncode != 0:
+            _fail("npm install failed. Check the output above.")
 
-    subprocess.run(["npm", "run", "build"], cwd=CLIENT_DIR, check=True)
-    print("  Client built successfully.")
-    return True
+    print("\n  Building client UI...\n")
+    result = _run(["npm", "run", "build"], cwd=CLIENT_DIR)
+    if result.returncode != 0:
+        _fail("Client build failed. Check the output above.")
+    print("\n  Client built successfully.")
 
+
+def print_first_run_notice():
+    """Inform user about model download on first run."""
+    cache_dir = Path.home() / ".cache" / "kokoro"
+    if cache_dir.exists() and any(cache_dir.rglob("*.pt")):
+        return  # Model already cached
+
+    print()
+    print("  " + _bold("First run: Kokoro model will be downloaded (~320 MB)."))
+    print("  This is automatic and only happens once.")
+    print("  Models are cached at: ~/.cache/kokoro/")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    # Build client if needed
-    try:
-        build_client()
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Warning: Could not build client ({e}). Server will start without UI.")
-        print("  To fix: cd client && npm install && npm run build")
+    print()
+    print("  " + _bold("Open Mobile TTS"))
+    print("  " + "-" * 40)
+    print()
+    print("  Checking dependencies...")
+    print()
 
-    # Set static dir for the server
+    # 1. Check system requirements
+    check_python_version()
+    check_system_deps()
+    check_node()
+
+    print()
+    print("  All system dependencies found.")
+
+    # 2. Install Python packages
+    install_pip_deps()
+
+    # 3. Build client
+    build_client()
+
+    # 4. Notify about model download
+    print_first_run_notice()
+
+    # 5. Set static dir for the server
     os.environ.setdefault("STATIC_DIR", str(CLIENT_BUILD))
 
-    # Add server to Python path
+    # 6. Add server to Python path and start
     sys.path.insert(0, str(SERVER_DIR))
 
-    # Start uvicorn
     import uvicorn
     from src.config import settings
 
-    print(f"\n  Open Mobile TTS")
-    print(f"  http://localhost:{settings.PORT}\n")
+    print()
+    print("  " + _bold(f"Ready at http://localhost:{settings.PORT}"))
+    print()
 
     uvicorn.run(
         "src.main:app",

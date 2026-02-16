@@ -1,0 +1,17 @@
+node_modules
+client/node_modules
+client/build
+client/.svelte-kit
+__pycache__
+*.pyc
+.git
+.gitignore
+.env
+.env.*
+*.md
+docs/
+.vscode/
+.idea/
+*.log
+venv/
+.venv/

@@ -1,0 +1,24 @@
+# Open Mobile TTS — Docker Compose
+#
+# Usage:
+#   docker compose up --build
+#   Open http://localhost:8000
+
+services:
+  openmobiletts:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - WORKERS=1
+      - DEFAULT_VOICE=af_heart
+      - DEFAULT_SPEED=1.0
+    volumes:
+      # Persist the Kokoro model cache so it survives container restarts
+      - kokoro-cache:/root/.cache/kokoro
+    restart: unless-stopped
+
+volumes:
+  kokoro-cache:
