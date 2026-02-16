@@ -3,7 +3,8 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
 	import { uploadDocument } from '$lib/services/api';
-	import { FileText, Upload, Loader2, Volume2, Clock, Play, ChevronDown } from 'lucide-svelte';
+	import { Upload, Loader2, Clock, Play, ChevronDown } from 'lucide-svelte';
+	import { onDestroy } from 'svelte';
 
 	let text = $state('');
 	let isUploading = $state(false);
@@ -11,7 +12,8 @@
 	let fileInput;
 
 	let playerState = $state(PlayState.IDLE);
-	playerStore.state.subscribe((s) => (playerState = s));
+	const unsubState = playerStore.state.subscribe((s) => (playerState = s));
+	onDestroy(unsubState);
 
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
 	const isBusy = $derived(isGenerating || isUploading);

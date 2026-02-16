@@ -1,16 +1,20 @@
 <script>
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { AlignLeft } from 'lucide-svelte';
+	import { onDestroy } from 'svelte';
 
 	let segments = $state([]);
 	let activeIndex = $state(-1);
 	let playerState = $state(PlayState.IDLE);
 	let inputText = $state('');
 
-	playerStore.segments.subscribe((s) => (segments = s));
-	playerStore.activeSegmentIndex.subscribe((i) => (activeIndex = i));
-	playerStore.state.subscribe((s) => (playerState = s));
-	playerStore.inputText.subscribe((t) => (inputText = t));
+	const unsubs = [
+		playerStore.segments.subscribe((s) => (segments = s)),
+		playerStore.activeSegmentIndex.subscribe((i) => (activeIndex = i)),
+		playerStore.state.subscribe((s) => (playerState = s)),
+		playerStore.inputText.subscribe((t) => (inputText = t)),
+	];
+	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const isActive = $derived(
 		playerState === PlayState.GENERATING ||
@@ -18,7 +22,7 @@
 		playerState === PlayState.PAUSED
 	);
 
-	let scrollContainer;
+	let scrollContainer = $state(null);
 
 	// Auto-scroll to active segment
 	$effect(() => {

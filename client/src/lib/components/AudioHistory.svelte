@@ -3,9 +3,11 @@
 	import { playerStore } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { Play, Trash2, Clock, Volume2 } from 'lucide-svelte';
+	import { onDestroy } from 'svelte';
 
 	let history = $state([]);
-	historyStore.subscribe((h) => (history = h));
+	const unsubHistory = historyStore.subscribe((h) => (history = h));
+	onDestroy(unsubHistory);
 
 	const voiceDisplayNames = {
 		af_heart: 'Heart',

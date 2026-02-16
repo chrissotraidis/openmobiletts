@@ -48,6 +48,7 @@ pnpm-lock.yaml
 # Build outputs
 dist/
 build/
+.svelte-kit/
 .cache/
 .parcel-cache/
 .next/

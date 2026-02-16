@@ -1,5 +1,4 @@
 <script>
-	import { playerStore } from '$lib/stores/player';
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import AudioPlayer from '$lib/components/AudioPlayer.svelte';

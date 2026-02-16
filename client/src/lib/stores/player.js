@@ -111,6 +111,7 @@ function createPlayerStore() {
 
 				const reader = response.body.getReader();
 				let buffer = new Uint8Array(0);
+				let pendingAudioBytes = 0; // when > 0, we're reading exactly this many bytes of MP3
 
 				while (true) {
 					const { done, value } = await reader.read();
@@ -122,10 +123,23 @@ function createPlayerStore() {
 					combined.set(value, buffer.length);
 					buffer = combined;
 
-					// Process buffer: look for TIMING: lines
-					while (true) {
+					// Process buffer using length-prefixed framing protocol:
+					//   TIMING:{json}\n
+					//   AUDIO:{length}\n
+					//   {exactly length bytes of MP3}
+					while (buffer.length > 0) {
+						if (pendingAudioBytes > 0) {
+							// Reading binary MP3 data — take exactly pendingAudioBytes
+							if (buffer.length < pendingAudioBytes) break; // need more data
+							audioChunks.push(buffer.slice(0, pendingAudioBytes));
+							buffer = buffer.slice(pendingAudioBytes);
+							pendingAudioBytes = 0;
+							continue;
+						}
+
+						// Looking for a text line (TIMING: or AUDIO:)
 						const newlineIdx = buffer.indexOf(10); // \n
-						if (newlineIdx === -1) break;
+						if (newlineIdx === -1) break; // incomplete line, wait for more data
 
 						const line = new TextDecoder().decode(buffer.slice(0, newlineIdx));
 						buffer = buffer.slice(newlineIdx + 1);
@@ -134,34 +148,15 @@ function createPlayerStore() {
 							const timing = JSON.parse(line.slice(7));
 							timingData.push(timing);
 							segments.set([...timingData]);
-						} else if (line.length > 0) {
-							// Binary data got mixed into a text line — shouldn't happen with proper protocol
-						}
-					}
-
-					// Remaining buffer is MP3 audio data
-					if (buffer.length > 0) {
-						// Check if buffer starts with a TIMING: marker
-						const marker = new TextDecoder().decode(buffer.slice(0, 7));
-						if (!marker.startsWith('TIMING:')) {
-							// It's audio data
-							audioChunks.push(buffer.slice());
-							buffer = new Uint8Array(0);
+						} else if (line.startsWith('AUDIO:')) {
+							pendingAudioBytes = parseInt(line.slice(6), 10);
 						}
 					}
 				}
 
-				// Handle any remaining data as audio
-				if (buffer.length > 0) {
-					const text = new TextDecoder().decode(buffer.slice(0, 7));
-					if (text.startsWith('TIMING:')) {
-						const line = new TextDecoder().decode(buffer);
-						const timing = JSON.parse(line.slice(7));
-						timingData.push(timing);
-						segments.set([...timingData]);
-					} else {
-						audioChunks.push(buffer);
-					}
+				// Handle any remaining buffered audio data
+				if (pendingAudioBytes > 0 && buffer.length > 0) {
+					audioChunks.push(buffer.slice(0, pendingAudioBytes));
 				}
 
 				// Build audio blob and create playback element

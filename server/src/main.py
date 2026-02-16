@@ -59,10 +59,10 @@ async def stream_tts(
     """
     Stream TTS audio with timing metadata.
 
-    Protocol:
-        1. For each audio chunk, send timing metadata as JSON line
-        2. Immediately follow with MP3 audio bytes
-        3. Repeat until all text is processed
+    Protocol per chunk:
+        1. TIMING:{json}\\n  — timing metadata
+        2. AUDIO:{length}\\n  — byte count of following MP3 data
+        3. {MP3 bytes}        — exactly {length} bytes of audio
     """
     if not text.strip():
         raise HTTPException(
@@ -82,7 +82,8 @@ async def stream_tts(
             timing_line = f"TIMING:{json.dumps(timing)}\n"
             yield timing_line.encode('utf-8')
 
-            # Yield MP3 audio bytes
+            # Yield audio length header then MP3 bytes
+            yield f"AUDIO:{len(mp3_bytes)}\n".encode('utf-8')
             yield mp3_bytes
 
     return StreamingResponse(
@@ -103,7 +104,9 @@ async def upload_document(file: UploadFile = File(...)):
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    file_path = Path(settings.UPLOAD_DIR) / file.filename
+    # Sanitize filename to prevent path traversal
+    safe_name = Path(file.filename).name
+    file_path = Path(settings.UPLOAD_DIR) / safe_name
 
     try:
         with open(file_path, 'wb') as f:
@@ -146,7 +149,9 @@ async def stream_document(
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    file_path = Path(settings.UPLOAD_DIR) / file.filename
+    # Sanitize filename to prevent path traversal
+    safe_name = Path(file.filename).name
+    file_path = Path(settings.UPLOAD_DIR) / safe_name
 
     try:
         with open(file_path, 'wb') as f:
@@ -168,6 +173,7 @@ async def stream_document(
             ):
                 timing_line = f"TIMING:{json.dumps(timing)}\n"
                 yield timing_line.encode('utf-8')
+                yield f"AUDIO:{len(mp3_bytes)}\n".encode('utf-8')
                 yield mp3_bytes
 
         return StreamingResponse(
@@ -203,11 +209,14 @@ async def health_check():
 _static_dir = Path(settings.STATIC_DIR) if settings.STATIC_DIR else Path(__file__).parent.parent.parent / "client" / "build"
 
 if _static_dir.exists():
+    _static_root = _static_dir.resolve()
+
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         """Serve the SvelteKit SPA — files if they exist, index.html otherwise."""
-        file_path = _static_dir / path
-        if file_path.is_file():
+        file_path = (_static_dir / path).resolve()
+        # Prevent path traversal — resolved path must be within static root
+        if str(file_path).startswith(str(_static_root)) and file_path.is_file():
             return FileResponse(file_path)
         # SPA fallback
         return FileResponse(_static_dir / "index.html")

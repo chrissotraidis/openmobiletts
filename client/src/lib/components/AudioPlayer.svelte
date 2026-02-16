@@ -1,6 +1,7 @@
 <script>
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { Play, Pause, Square, Volume2 } from 'lucide-svelte';
+	import { onDestroy } from 'svelte';
 
 	let playerState = $state(PlayState.IDLE);
 	let currentTime = $state(0);
@@ -9,12 +10,15 @@
 	let speed = $state(1.0);
 	let errorMessage = $state('');
 
-	playerStore.state.subscribe((s) => (playerState = s));
-	playerStore.currentTime.subscribe((t) => (currentTime = t));
-	playerStore.duration.subscribe((d) => (duration = d));
-	playerStore.voice.subscribe((v) => (voiceName = v));
-	playerStore.speed.subscribe((s) => (speed = s));
-	playerStore.errorMessage.subscribe((e) => (errorMessage = e));
+	const unsubs = [
+		playerStore.state.subscribe((s) => (playerState = s)),
+		playerStore.currentTime.subscribe((t) => (currentTime = t)),
+		playerStore.duration.subscribe((d) => (duration = d)),
+		playerStore.voice.subscribe((v) => (voiceName = v)),
+		playerStore.speed.subscribe((s) => (speed = s)),
+		playerStore.errorMessage.subscribe((e) => (errorMessage = e)),
+	];
+	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const isVisible = $derived(playerState !== PlayState.IDLE);
 	const isPlaying = $derived(playerState === PlayState.PLAYING);
