@@ -1,5 +1,2 @@
-import { redirect } from '@sveltejs/kit';
-
-export function load() {
-	throw redirect(302, '/login');
-}
+// Root page is the app — no redirect needed
+export const prerender = true;

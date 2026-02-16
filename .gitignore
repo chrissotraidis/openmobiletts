@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python build artifacts (not SvelteKit src/lib/)
+/lib/
 lib64/
 parts/
 sdist/
@@ -47,6 +48,7 @@ pnpm-lock.yaml
 # Build outputs
 dist/
 build/
+.svelte-kit/
 .cache/
 .parcel-cache/
 .next/

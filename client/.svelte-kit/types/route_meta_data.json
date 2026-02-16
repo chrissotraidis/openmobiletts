@@ -1,7 +1,0 @@
-{
-	"/": [
-		"src/routes/+page.js"
-	],
-	"/login": [],
-	"/player": []
-}
