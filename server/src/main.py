@@ -1,39 +1,24 @@
-"""Open Mobile TTS - FastAPI server application."""
+"""Open Mobile TTS - Single-app server (no authentication)."""
 
 import json
 import os
 from pathlib import Path
 from typing import List
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
-from .auth import authenticate_user, create_access_token, verify_token
 from .config import settings
 from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
 from .tts_engine import TTSEngine
 
-# Validate settings on startup
-settings.validate()
-
 # Create FastAPI app
 app = FastAPI(
     title="Open Mobile TTS",
-    description="Private text-to-speech server with streaming support",
-    version="0.1.0",
-)
-
-# CORS middleware for web client
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    description="Private text-to-speech app — single process, no auth",
+    version="0.2.0",
 )
 
 # Initialize services
@@ -46,20 +31,9 @@ Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
 
 # Request/Response models
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
-
-
 class VoiceInfo(BaseModel):
     name: str
     language: str
-
-
-class TextRequest(BaseModel):
-    text: str
-    voice: str = settings.DEFAULT_VOICE
-    speed: float = settings.DEFAULT_SPEED
 
 
 class DocumentUploadResponse(BaseModel):
@@ -68,44 +42,10 @@ class DocumentUploadResponse(BaseModel):
     chunk_count: int
 
 
-# Authentication endpoints
-@app.post("/token", response_model=TokenResponse)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Authenticate user and return JWT token.
-
-    Args:
-        form_data: OAuth2 form with username and password
-
-    Returns:
-        Access token and token type
-
-    Raises:
-        HTTPException: If authentication fails
-    """
-    if not authenticate_user(form_data.username, form_data.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    access_token = create_access_token(form_data.username)
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 # Voice endpoints
 @app.get("/api/voices", response_model=List[VoiceInfo])
-async def list_voices(username: str = Depends(verify_token)):
-    """
-    List available TTS voices.
-
-    Args:
-        username: Authenticated username from token
-
-    Returns:
-        List of available voices with metadata
-    """
+async def list_voices():
+    """List available TTS voices."""
     return tts_engine.available_voices
 
 
@@ -115,27 +55,14 @@ async def stream_tts(
     text: str,
     voice: str = settings.DEFAULT_VOICE,
     speed: float = settings.DEFAULT_SPEED,
-    username: str = Depends(verify_token),
 ):
     """
     Stream TTS audio with timing metadata.
-
-    This endpoint preprocesses the text, generates audio chunks via Kokoro,
-    and streams both timing metadata and MP3 audio to the client.
 
     Protocol:
         1. For each audio chunk, send timing metadata as JSON line
         2. Immediately follow with MP3 audio bytes
         3. Repeat until all text is processed
-
-    Args:
-        text: Text to convert to speech
-        voice: Voice name to use
-        speed: Speech speed multiplier
-        username: Authenticated username from token
-
-    Returns:
-        StreamingResponse with chunked MP3 audio and timing metadata
     """
     if not text.strip():
         raise HTTPException(
@@ -164,35 +91,18 @@ async def stream_tts(
         headers={
             "Cache-Control": "no-cache",
             "X-Content-Type-Options": "nosniff",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )
 
 
 # Document endpoints
 @app.post("/api/documents/upload", response_model=DocumentUploadResponse)
-async def upload_document(
-    file: UploadFile = File(...),
-    username: str = Depends(verify_token),
-):
-    """
-    Upload a document (PDF, DOCX, TXT) and extract text for TTS.
-
-    Args:
-        file: Uploaded document file
-        username: Authenticated username from token
-
-    Returns:
-        Extracted text and metadata
-
-    Raises:
-        HTTPException: If file format is unsupported or file is too large
-    """
-    # Validate file size
+async def upload_document(file: UploadFile = File(...)):
+    """Upload a document (PDF, DOCX, TXT) and extract text for TTS."""
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    # Save uploaded file
     file_path = Path(settings.UPLOAD_DIR) / file.filename
 
     try:
@@ -206,10 +116,7 @@ async def upload_document(
                     )
                 f.write(chunk)
 
-        # Extract text from document
         text = document_processor.extract(str(file_path))
-
-        # Preprocess and chunk for analysis
         chunks = text_preprocessor.process(text)
 
         return {
@@ -225,7 +132,6 @@ async def upload_document(
         )
 
     finally:
-        # Clean up uploaded file
         if file_path.exists():
             os.unlink(file_path)
 
@@ -235,27 +141,11 @@ async def stream_document(
     file: UploadFile = File(...),
     voice: str = settings.DEFAULT_VOICE,
     speed: float = settings.DEFAULT_SPEED,
-    username: str = Depends(verify_token),
 ):
-    """
-    Upload a document and stream TTS audio directly.
-
-    Combines document upload, text extraction, and TTS streaming in one endpoint.
-
-    Args:
-        file: Uploaded document file
-        voice: Voice name to use
-        speed: Speech speed multiplier
-        username: Authenticated username from token
-
-    Returns:
-        StreamingResponse with chunked MP3 audio and timing metadata
-    """
-    # Validate file size
+    """Upload a document and stream TTS audio directly."""
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    # Save uploaded file temporarily
     file_path = Path(settings.UPLOAD_DIR) / file.filename
 
     try:
@@ -269,12 +159,10 @@ async def stream_document(
                     )
                 f.write(chunk)
 
-        # Extract and preprocess text
         text = document_processor.extract(str(file_path))
         text_chunks = text_preprocessor.process(text)
 
         async def generate_stream():
-            """Generator for streaming document TTS."""
             async for mp3_bytes, timing in tts_engine.generate_speech_stream(
                 text_chunks, voice=voice, speed=speed
             ):
@@ -299,228 +187,35 @@ async def stream_document(
         )
 
     finally:
-        # Clean up uploaded file
         if file_path.exists():
             os.unlink(file_path)
 
 
 # Health check
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "0.1.0"}
+    return {"status": "healthy", "version": "0.2.0"}
 
 
-# Root endpoint
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "Open Mobile TTS",
-        "version": "0.1.0",
-        "description": "Private text-to-speech server with streaming support",
-        "endpoints": {
-            "auth": "/token",
-            "voices": "/api/voices",
-            "stream_tts": "/api/tts/stream",
-            "upload_document": "/api/documents/upload",
-            "stream_document": "/api/documents/stream",
-        },
-    }
+# Serve built SvelteKit static files
+# This must be mounted LAST so API routes take priority
+_static_dir = Path(settings.STATIC_DIR) if settings.STATIC_DIR else Path(__file__).parent.parent.parent / "client" / "build"
 
-
-# Debug/Status page
-@app.get("/status", response_class=HTMLResponse)
-async def status_page():
-    """HTML status page for debugging."""
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Open Mobile TTS - Status</title>
-        <style>
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-                max-width: 800px;
-                margin: 40px auto;
-                padding: 20px;
-                background: #f5f5f5;
-            }
-            .container {
-                background: white;
-                padding: 30px;
-                border-radius: 12px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h1 {
-                color: #0ea5e9;
-                margin-bottom: 10px;
-            }
-            .status {
-                display: inline-block;
-                padding: 4px 12px;
-                background: #10b981;
-                color: white;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            .section {
-                margin: 25px 0;
-                padding: 20px;
-                background: #f9fafb;
-                border-radius: 8px;
-            }
-            .endpoint {
-                display: flex;
-                align-items: center;
-                margin: 10px 0;
-                padding: 10px;
-                background: white;
-                border-radius: 4px;
-            }
-            .method {
-                background: #3b82f6;
-                color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-                margin-right: 10px;
-                min-width: 50px;
-                text-align: center;
-            }
-            .method.post { background: #10b981; }
-            .path {
-                font-family: monospace;
-                color: #374151;
-            }
-            button {
-                background: #0ea5e9;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 14px;
-                margin: 5px;
-            }
-            button:hover {
-                background: #0284c7;
-            }
-            #output {
-                margin-top: 15px;
-                padding: 15px;
-                background: #1f2937;
-                color: #10b981;
-                border-radius: 6px;
-                font-family: monospace;
-                font-size: 12px;
-                white-space: pre-wrap;
-                max-height: 300px;
-                overflow-y: auto;
-            }
-            .info {
-                color: #6b7280;
-                font-size: 14px;
-                margin-top: 10px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🎙️ Open Mobile TTS</h1>
-            <span class="status">✓ Server Running</span>
-
-            <div class="section">
-                <h3>📡 API Endpoints</h3>
-                <div class="endpoint">
-                    <span class="method post">POST</span>
-                    <span class="path">/token</span>
-                </div>
-                <div class="endpoint">
-                    <span class="method">GET</span>
-                    <span class="path">/api/voices</span>
-                </div>
-                <div class="endpoint">
-                    <span class="method">GET</span>
-                    <span class="path">/api/tts/stream?text={text}&voice={voice}</span>
-                </div>
-                <div class="endpoint">
-                    <span class="method post">POST</span>
-                    <span class="path">/api/documents/upload</span>
-                </div>
-                <div class="endpoint">
-                    <span class="method">GET</span>
-                    <span class="path">/health</span>
-                </div>
-            </div>
-
-            <div class="section">
-                <h3>🧪 Quick Tests</h3>
-                <button onclick="testHealth()">Test Health</button>
-                <button onclick="testLogin()">Test Login</button>
-                <button onclick="testVoices()">Test Voices</button>
-                <div id="output"></div>
-            </div>
-
-            <div class="section">
-                <h3>ℹ️ Info</h3>
-                <p class="info">
-                    <strong>Version:</strong> 0.1.0<br>
-                    <strong>Client:</strong> <a href="http://localhost:5173" target="_blank">http://localhost:5173</a><br>
-                    <strong>API Docs:</strong> <a href="/docs" target="_blank">/docs</a> (FastAPI auto-docs)
-                </p>
-            </div>
-        </div>
-
-        <script>
-            const output = document.getElementById('output');
-
-            async function testHealth() {
-                output.textContent = 'Testing health endpoint...\n';
-                try {
-                    const res = await fetch('/health');
-                    const data = await res.json();
-                    output.textContent += '✓ SUCCESS\n' + JSON.stringify(data, null, 2);
-                } catch (err) {
-                    output.textContent += '✗ ERROR\n' + err.message;
-                }
-            }
-
-            async function testLogin() {
-                output.textContent = 'Testing login...\n';
-                try {
-                    const res = await fetch('/token', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'username=admin&password=testpassword123'
-                    });
-                    const data = await res.json();
-                    output.textContent += '✓ SUCCESS\n' + JSON.stringify(data, null, 2);
-                    window.testToken = data.access_token;
-                } catch (err) {
-                    output.textContent += '✗ ERROR\n' + err.message;
-                }
-            }
-
-            async function testVoices() {
-                output.textContent = 'Testing voices endpoint...\n';
-                if (!window.testToken) {
-                    output.textContent += 'Please run "Test Login" first to get a token.';
-                    return;
-                }
-                try {
-                    const res = await fetch('/api/voices', {
-                        headers: { 'Authorization': 'Bearer ' + window.testToken }
-                    });
-                    const data = await res.json();
-                    output.textContent += '✓ SUCCESS\n' + JSON.stringify(data, null, 2);
-                } catch (err) {
-                    output.textContent += '✗ ERROR\n' + err.message;
-                }
-            }
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
+if _static_dir.exists():
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Serve the SvelteKit SPA — files if they exist, index.html otherwise."""
+        file_path = _static_dir / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        # SPA fallback
+        return FileResponse(_static_dir / "index.html")
+else:
+    @app.get("/")
+    async def root():
+        return {
+            "name": "Open Mobile TTS",
+            "version": "0.2.0",
+            "status": "Client not built. Run: cd client && npm run build",
+        }
