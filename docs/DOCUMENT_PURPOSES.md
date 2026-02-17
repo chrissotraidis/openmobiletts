@@ -9,10 +9,9 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Audience**: New users, GitHub visitors
 **Contents**:
 - Project description and features
-- Quick start installation steps
+- Quick start: `python run.py`
 - Links to detailed documentation
-- License and acknowledgments
-**Overlap**: None - entry point to all other docs
+**Overlap**: None — entry point to all other docs
 
 ### claude.md
 **Purpose**: Development guidelines for AI assistants
@@ -21,29 +20,7 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 - Code style preferences
 - File organization rules
 - Development workflow
-**Overlap**: None - internal development doc
-
-## Component READMEs
-
-### client/README.md
-**Purpose**: Frontend-specific setup and structure
-**Audience**: Frontend developers
-**Contents**:
-- Svelte/SvelteKit setup
-- Client-only dependencies
-- Component structure
-- PWA configuration
-**Overlap**: None - client-specific only
-
-### server/README.md
-**Purpose**: Backend-specific setup and API reference
-**Audience**: Backend developers
-**Contents**:
-- Python/FastAPI setup
-- Server-only dependencies
-- API endpoint documentation
-- Docker deployment
-**Overlap**: None - server-specific only
+**Overlap**: None — internal development doc
 
 ## Documentation Folder
 
@@ -54,40 +31,49 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 - Links to all other docs
 - Quick reference table
 - Document purpose summary
-**Overlap**: None - just an index
+**Overlap**: None — just an index
 
 ### docs/QUICK_REFERENCE.md
 **Purpose**: One-page cheat sheet for daily use
 **Audience**: Regular users who need quick answers
 **Contents**:
-- Common commands
-- Default credentials
+- Common commands (`python run.py`, Docker)
+- Configuration options
 - File locations
 - Quick troubleshooting steps
 **Unique Focus**: Speed over completeness
 **Overlap Prevention**: No explanations of "why", just "how"
 
+### docs/SETUP_GUIDE.md
+**Purpose**: Full setup walkthrough
+**Audience**: First-time users
+**Contents**:
+- Prerequisites
+- Step-by-step installation
+- Docker alternative
+- Development mode setup
+**Unique Focus**: Getting from zero to running
+**Overlap Prevention**: No architecture or internals
+
 ### docs/HOW_IT_WORKS.md
 **Purpose**: Complete system explanation
 **Audience**: Users who want to understand the internals
 **Contents**:
-- Is model local or API?
 - Architecture diagram
 - Data flow from text → speech
-- Where files are stored
 - Streaming protocol details
+- Where files are stored
 **Unique Focus**: Understanding, not instructions
 **Overlap Prevention**: No setup instructions, no command examples
 
 ### docs/LIMITS_AND_CONSTRAINTS.md
 **Purpose**: Detailed performance characteristics
-**Audience**: Users planning production usage or large-scale use
+**Audience**: Users planning usage
 **Contents**:
 - Token limits and technical reasons
 - Processing speed tables
 - Memory requirements
 - Comparison to cloud APIs
-- How to overcome limits
 **Unique Focus**: Quantitative data and benchmarks
 **Overlap Prevention**: No architecture explanations, just metrics
 
@@ -103,10 +89,9 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 
 ### docs/implementation-status.md
 **Purpose**: Current feature completeness
-**Audience**: Project managers, contributors
+**Audience**: Contributors
 **Contents**:
 - What's implemented (✅)
-- What's in progress (🚧)
 - What's planned (📋)
 **Unique Focus**: Present and future, not past
 **Overlap Prevention**: Status only, no explanations of features
@@ -115,10 +100,9 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Purpose**: Design decisions and rationale
 **Audience**: Developers understanding why things are built this way
 **Contents**:
-- Why Svelte over React?
-- Why FastAPI over Flask?
+- Why Svelte? Why FastAPI? Why Kokoro?
 - Streaming protocol design choices
-- Security architecture
+- Performance characteristics
 **Unique Focus**: Rationale and alternatives considered
 **Overlap Prevention**: No setup steps, no usage instructions
 
@@ -126,42 +110,41 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Purpose**: Test coverage and results
 **Audience**: QA engineers, developers
 **Contents**:
-- Unit test results (24 tests)
-- Integration test coverage
-- Known test failures
-- Testing philosophy
+- Automated test results
+- Manual testing results
+- Known issues and gaps
 **Unique Focus**: Quality assurance data
 **Overlap Prevention**: No feature descriptions, just test results
 
-## Overlap Matrix
+### docs/MIGRATION.md
+**Purpose**: Records the architecture change from client-server to monolithic
+**Audience**: Developers needing historical context
+**Contents**:
+- What changed and why
+- What was removed and added
+**Unique Focus**: One specific architectural decision
+**Overlap Prevention**: Historical record only
 
-This matrix shows which documents cover which topics (X = primary, x = mention):
-
-| Topic | README | QUICK_REF | HOW_IT_WORKS | LIMITS | TECH_ARCH | IMPL_STATUS | TESTING | CHANGELOG |
-|-------|--------|-----------|--------------|--------|-----------|-------------|---------|-----------|
-| Quick start | X | X | - | - | - | - | - | - |
-| Commands | - | X | - | - | - | - | - | - |
-| Architecture | x | - | X | - | X | - | - | - |
-| Model location | x | x | X | - | - | - | - | - |
-| Performance | - | x | - | X | - | - | - | - |
-| Token limits | - | - | x | X | - | - | - | - |
-| Setup steps | X | X | - | - | - | - | - | - |
-| API endpoints | x | x | - | - | - | - | - | - |
-| Design rationale | - | - | - | - | X | - | - | - |
-| Feature status | - | - | - | - | - | X | - | - |
-| Test results | - | - | - | - | - | - | X | - |
-| Bug fixes | - | - | - | - | - | - | - | X |
-| Troubleshooting | - | X | x | - | - | - | - | - |
+### docs/SECURITY_CHECKLIST.md
+**Purpose**: Security considerations for deployment
+**Audience**: Anyone deploying beyond localhost
+**Contents**:
+- Network security for VPS deployment
+- Git hygiene (what not to commit)
+**Unique Focus**: Security only
+**Overlap Prevention**: No setup instructions
 
 ## Rules to Prevent Overlap
 
 1. **QUICK_REFERENCE** = Commands only, no explanations
-2. **HOW_IT_WORKS** = Concepts only, no commands
-3. **LIMITS** = Numbers only, no architecture
-4. **TECH_ARCH** = Design only, no implementation
-5. **IMPL_STATUS** = Status only, no descriptions
-6. **TESTING** = Results only, no feature details
-7. **CHANGELOG** = History only, no current state
+2. **SETUP_GUIDE** = Installation only, no architecture
+3. **HOW_IT_WORKS** = Concepts only, no commands
+4. **LIMITS** = Numbers only, no architecture
+5. **TECH_ARCH** = Design only, no implementation
+6. **IMPL_STATUS** = Status only, no descriptions
+7. **TESTING** = Results only, no feature details
+8. **CHANGELOG** = History only, no current state
+9. **MIGRATION** = Architecture change record only
 
 ## When to Update Which Doc
 
@@ -174,14 +157,3 @@ This matrix shows which documents cover which topics (X = primary, x = mention):
 | Performance change | LIMITS_AND_CONSTRAINTS.md |
 | Test results change | testing-summary.md |
 | Project description | README.md |
-
-## Validation Checklist
-
-Before adding content to a doc, ask:
-
-- [ ] Is this content already in another doc?
-- [ ] Does this fit the doc's specific purpose?
-- [ ] Am I duplicating something that should just be a link?
-- [ ] Could this be in docs/README.md as a pointer instead?
-
-If unsure, use docs/README.md to link to the right place rather than duplicating content.

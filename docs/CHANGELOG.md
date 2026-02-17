@@ -1,6 +1,34 @@
-# Open Mobile TTS - Fixes Applied
+# Open Mobile TTS - Changelog
 
-**Date**: 2026-01-30
+---
+
+## 2026-02-17 — Documentation Overhaul
+
+Updated all documentation to reflect the monolithic architecture (v0.2). Removed outdated references to JWT authentication, CORS, separate client/server processes, port 5173, default credentials, and two-terminal startup. Files rewritten: QUICK_REFERENCE.md, SETUP_GUIDE.md, HOW_IT_WORKS.md, implementation-status.md, technical-architecture.md, testing-summary.md, SECURITY_CHECKLIST.md, docs/README.md, DOCUMENT_PURPOSES.md.
+
+---
+
+## 2026-02 — Monolithic Migration (v0.2)
+
+Redesigned from a two-process client-server architecture to a single-process monolithic app. See [MIGRATION.md](MIGRATION.md) for full details.
+
+**Removed:**
+- JWT authentication (no login, no passwords)
+- CORS middleware (same origin)
+- Separate client dev server (port 5173)
+- `src/auth.py` module
+- Environment variables: JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD_HASH
+
+**Added:**
+- `run.py` — Single-command launcher
+- `Dockerfile` + `docker-compose.yml` — Multi-stage Docker build
+- Static file serving (FastAPI serves built SvelteKit UI)
+- Single port (8000) for everything
+
+---
+
+## 2026-01-30 — v0.1 Fixes
+
 **Issues Fixed**: 3 major issues
 
 ---
