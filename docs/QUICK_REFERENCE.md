@@ -17,7 +17,8 @@
 | Text length | Unlimited | Auto-chunked into 250-token pieces |
 | Generation speed | 2-5x real-time (CPU) | Your hardware speed |
 | Voices | 11 built-in | More can be trained |
-| Concurrent requests | 1 | Single-user setup |
+| Concurrent requests | 1 | Single-process setup |
+| File uploads | 10MB default | Configurable via `MAX_UPLOAD_SIZE_MB` env var |
 | Storage | Your disk space | Audio cached in browser |
 
 ## Where Is the Model?
@@ -34,23 +35,34 @@
 
 ## How Fast Is It?
 
-| Your Setup | Text | Time | Audio Length |
-|------------|------|------|--------------|
-| CPU (your Mac) | 200 words | ~10 sec | ~80 seconds |
-| CPU (your Mac) | 1,000 words | ~1 min | ~7 minutes |
-| GPU (if you had one) | 1,000 words | ~5 sec | ~7 minutes |
+| Setup | Text | Time | Audio Length |
+|-------|------|------|--------------|
+| CPU (Mac) | 200 words | ~10 sec | ~80 seconds |
+| CPU (Mac) | 1,000 words | ~1 min | ~7 minutes |
+| GPU | 1,000 words | ~5 sec | ~7 minutes |
 
 ## Common Commands
 
-### Start Everything
+### Start the App
 ```bash
-# Terminal 1 - Server
-cd server
-python -m uvicorn src.main:app --reload --port 8000
+python run.py
+# Opens at http://localhost:8000
+```
 
-# Terminal 2 - Client
-cd client
-npm run dev
+### Start with Docker
+```bash
+docker compose up --build
+# Opens at http://localhost:8000
+```
+
+### Development Mode (Hot Reload)
+```bash
+# Terminal 1: API server with auto-reload
+cd server && pip install -r requirements.txt
+uvicorn src.main:app --reload --port 8000
+
+# Terminal 2: Vite dev server (proxies /api/* to port 8000)
+cd client && npm install && npm run dev
 ```
 
 ### Check Model
@@ -59,60 +71,54 @@ cd server
 python setup_models.py
 ```
 
-### View Logs
-```bash
-tail -f /tmp/server.log
-tail -f /tmp/client.log
-```
-
 ### Clear Audio Cache
 Open browser DevTools (F12) → Application → IndexedDB → Delete `openmobiletts`
 
-## Key Endpoints
+## Key URLs
 
 | URL | What |
 |-----|------|
-| http://localhost:5173 | Client app |
-| http://localhost:8000/health | Server health check |
+| http://localhost:8000 | App (UI + API) |
+| http://localhost:8000/health | Health check |
 | http://localhost:8000/docs | API documentation |
-| http://localhost:8000/status | Debug GUI |
 
-## Default Credentials
+## Configuration
 
-```
-Username: admin
-Password: testpassword123
-```
+Copy `server/.env.example` to `server/.env` to customize. All settings have sensible defaults — no `.env` file is required.
 
-⚠️ **Change these in production!**
+Key settings:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `PORT` | 8000 | Server port |
+| `DEFAULT_VOICE` | af_heart | Default TTS voice |
+| `DEFAULT_SPEED` | 1.0 | Playback speed |
+| `MAX_UPLOAD_SIZE_MB` | 10 | Max document upload size |
+| `MAX_CHUNK_TOKENS` | 250 | Tokens per TTS chunk |
+| `MP3_BITRATE` | 64k | Audio quality |
 
 ## File Locations
 
 ```
 openmobiletts/
-├── server/               Server code
-│   ├── src/main.py      API endpoints
-│   ├── src/tts_engine.py   Kokoro wrapper
-│   └── tests/           24 automated tests
-├── client/              Client code
-│   ├── src/routes/      Pages
-│   ├── src/lib/         Components
-│   └── static/          PWA assets
-└── docs/                Documentation
-    ├── HOW_IT_WORKS.md     ← Full explanation
-    └── LIMITS_AND_CONSTRAINTS.md  ← All limits
+├── run.py                Single-command launcher
+├── server/               FastAPI + Kokoro TTS
+│   ├── src/main.py       API endpoints + static file serving
+│   ├── src/tts_engine.py Kokoro wrapper
+│   └── tests/            Automated tests
+├── client/               SvelteKit UI
+│   ├── src/routes/       Pages (single root page)
+│   ├── src/lib/          Components, stores, services
+│   └── static/           PWA assets
+└── docs/                 Documentation
 ```
 
 ## Troubleshooting
 
-### Server won't start
+### App won't start
 ```bash
-# Install dependencies
-cd server
-pip install -r requirements.txt
-
-# Download model
-python setup_models.py
+# run.py checks dependencies and tells you what's missing
+python run.py
 ```
 
 ### Client shows white screen
@@ -122,12 +128,20 @@ python setup_models.py
 ### Audio won't play
 - Check console (F12) for errors
 - Try shorter text first
-- Check server logs: `tail -f /tmp/server.log`
+- Restart the app: `python run.py`
 
 ### Generation is slow
 - Normal for CPU (2-5x real-time)
 - Consider using GPU for 10-50x speedup
-- Or process in smaller chunks
+
+## One-Minute Overview
+
+1. **Single app**: `python run.py` builds the UI and starts the server
+2. **Model**: Kokoro TTS (82M params), downloads once to `~/.cache/kokoro/`
+3. **Privacy**: 100% local, no external APIs, no data leaves your machine
+4. **No auth**: No login, no passwords — designed for local/private use
+5. **Limits**: No text length limit, speed depends on your hardware
+6. **Cost**: Free (just electricity)
 
 ## Need More Info?
 
@@ -138,33 +152,3 @@ python setup_models.py
 | Technical architecture? | [technical-architecture.md](technical-architecture.md) |
 | What's implemented? | [implementation-status.md](implementation-status.md) |
 | How are tests doing? | [testing-summary.md](testing-summary.md) |
-
-## One-Minute Overview
-
-1. **Backend**: FastAPI server running Kokoro TTS (82M model) locally
-2. **Frontend**: SvelteKit PWA with audio player and synchronized text
-3. **Model**: Downloads once to `~/.cache/kokoro/`, runs on your CPU/GPU
-4. **Privacy**: Everything local, no external APIs, no data leaves your machine
-5. **Limits**: No text length limit, speed depends on your hardware
-6. **Cost**: Free (just electricity), no API costs
-7. **Quality**: State-of-the-art neural TTS, sounds natural
-
-## System Requirements
-
-**Minimum:**
-- Python 3.9+
-- 4GB RAM
-- 2GB disk space
-- Any CPU
-
-**Recommended:**
-- Python 3.11
-- 8GB RAM
-- GPU with 2GB+ VRAM
-- SSD storage
-
-**Current Setup (Your Mac):**
-- ✅ M1/M2 CPU (good performance)
-- ✅ 8GB+ RAM (sufficient)
-- ✅ Fast SSD (helps with model loading)
-- ⚠️ No dedicated GPU (CPU mode, slower but works)

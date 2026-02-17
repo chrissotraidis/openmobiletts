@@ -6,6 +6,8 @@ Open Mobile TTS is a **fully local, private text-to-speech system** that runs en
 
 ## Architecture Summary
 
+Open Mobile TTS is a **single-process application**. `python run.py` builds the SvelteKit UI and starts a FastAPI server that serves both the API and the built static files on one port.
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        Your Machine                          │
@@ -14,9 +16,9 @@ Open Mobile TTS is a **fully local, private text-to-speech system** that runs en
 │  │   Web Browser    │◄────HTTP─────►   FastAPI Server   │  │
 │  │   (SvelteKit)    │   localhost   │   (Python)        │  │
 │  │                  │     :8000     │                    │  │
-│  │  • UI/Forms      │              │  • Authentication  │  │
-│  │  • Audio Player  │              │  • Text Processing │  │
-│  │  • IndexedDB     │              │  • TTS Generation  │  │
+│  │  • UI/Forms      │              │  • Text Processing │  │
+│  │  • Audio Player  │              │  • TTS Generation  │  │
+│  │  • localStorage  │              │  • Static Serving  │  │
 │  └──────────────────┘              └────────┬───────────┘  │
 │                                              │              │
 │                                              ▼              │
@@ -32,13 +34,15 @@ Open Mobile TTS is a **fully local, private text-to-speech system** that runs en
 └─────────────────────────────────────────────────────────────┘
 ```
 
+**No authentication.** No CORS. No separate processes. One command, one port.
+
 ## Is the Model Running Locally?
 
 **Yes, 100% local.** Here's how it works:
 
 ### Model Download & Storage
 
-1. **First run**: When you start the server for the first time, it downloads the Kokoro TTS model from HuggingFace
+1. **First run**: When you start the app, it downloads the Kokoro TTS model from HuggingFace
 2. **Storage location**: `~/.cache/kokoro/` (approximately 320MB)
 3. **No API calls**: After initial download, everything runs locally on your CPU/GPU
 
@@ -46,26 +50,11 @@ Open Mobile TTS is a **fully local, private text-to-speech system** that runs en
 
 - **Name**: Kokoro TTS (82M parameters)
 - **License**: Apache 2.0 (fully open source, can use commercially)
-- **Quality**: State-of-the-art neural TTS
+- **Quality**: State-of-the-art neural TTS (#1 on HuggingFace TTS Arena)
 - **Speed**:
   - GPU: 35-210x real-time speed
-  - CPU (your setup): ~2-5x real-time speed
+  - CPU: ~2-5x real-time speed
 - **Voices**: 11 built-in voices (American/British, Male/Female)
-
-### Setup Process
-
-When you run `python setup_models.py` or start the server:
-
-```python
-# This downloads from HuggingFace (one-time)
-model = Kokoro(repo_id='hexgrad/Kokoro-82M', lang='en-us')
-
-# Model is cached at: ~/.cache/kokoro/
-# Contains:
-# - kokoro-v0_19.pth (~318MB) - Neural network weights
-# - voices/ - Voice embeddings
-# - config.json - Model configuration
-```
 
 ## Limits & Constraints
 
@@ -81,8 +70,7 @@ model = Kokoro(repo_id='hexgrad/Kokoro-82M', lang='en-us')
 
 **CPU-based generation is slower than GPU but fully functional.**
 
-Current setup (your Mac):
-- ~2-5x real-time speed
+- ~2-5x real-time speed on CPU
 - Example: 1 minute of audio takes ~12-30 seconds to generate
 - For very long texts (10,000+ words), expect several minutes
 
@@ -90,7 +78,7 @@ Current setup (your Mac):
 
 - **Model loading**: ~500MB RAM for model weights
 - **Generation**: +200-500MB RAM during active generation
-- **Client**: IndexedDB can store GBs of cached audio locally
+- **Browser**: localStorage for settings and history
 
 ### 4. No Hard Text Length Limit
 
@@ -103,8 +91,8 @@ Current setup (your Mac):
 
 ### Step-by-Step Process
 
-1. **User enters text** in the web interface
-2. **Client sends request** to server via HTTP
+1. **User enters text** in the web interface (or uploads a document)
+2. **Browser sends request** to the server at `/api/tts/stream`
 3. **Server preprocesses text**:
    ```python
    # text_preprocessor.py
@@ -130,21 +118,18 @@ Current setup (your Mac):
        yield mp3_bytes
    ```
 
-5. **Client receives stream**:
-   ```javascript
-   // TextInput.svelte
-   - Parse TIMING: metadata (text + timestamps)
-   - Collect MP3 binary chunks
-   - Combine into single audio blob
-   - Create blob URL for audio player
-   - Save to IndexedDB for history
-   ```
+5. **Browser receives stream**:
+   - Parses TIMING metadata (text + timestamps)
+   - Collects MP3 binary chunks
+   - Combines into single audio blob
+   - Creates blob URL for audio player
+   - Saves to history (localStorage)
 
 6. **Audio player plays** the blob URL using native HTML5 audio
 
 ## Streaming Protocol
 
-The server and client communicate using a custom streaming protocol:
+The server streams a mix of text metadata and binary audio:
 
 ```
 TIMING:{"text":"Hello world","start":0,"end":1.2}\n
@@ -158,7 +143,7 @@ TIMING:{"text":"of the system","start":2.5,"end":3.8}\n
 
 ### Why This Design?
 
-1. **Progressive playback**: Client can start playing before all audio is generated
+1. **Progressive playback**: Browser can start playing before all audio is generated
 2. **Synchronized highlighting**: Timing data allows text to highlight as it's spoken
 3. **Efficient**: No base64 encoding, raw binary MP3 data
 4. **Interruptible**: Can cancel generation mid-stream
@@ -173,62 +158,40 @@ TIMING:{"text":"of the system","start":2.5,"end":3.8}\n
 
 ### Client Side (All Local)
 
-- **IndexedDB**: Stores generated audio + metadata in browser
+- **localStorage**: Stores settings and history metadata in browser
 - **Location**: Browser's private storage (not accessible to other sites)
-- **Size**: Unlimited (subject to browser quota, typically 50%+ of available disk)
 - **Persistence**: Survives page refreshes, cleared only by user action
 
-### Authentication
+### No Authentication
 
-- **JWT tokens**: Stored in localStorage
-- **Password hashing**: Argon2id (memory-hard, secure)
-- **No sessions**: Server doesn't track logged-in users
+The app has no login, no passwords, no tokens. It is designed as a **local-only tool** — anyone who can reach `localhost:8000` can use it. If you expose it on a network, access is controlled at the network level, not the application level.
 
 ## File Structure
 
-### Server (`/server`)
-
 ```
-server/
-├── src/
-│   ├── main.py              # FastAPI app, API endpoints
-│   ├── tts_engine.py        # Kokoro TTS wrapper
-│   ├── text_preprocessor.py # Text normalization & chunking
-│   ├── audio_encoder.py     # MP3 encoding (pydub + ffmpeg)
-│   ├── document_processor.py# PDF/DOCX/TXT extraction
-│   ├── auth.py              # JWT + password verification
-│   └── config.py            # Settings & environment
-├── tests/                   # 24 automated tests
-├── requirements.txt         # Python dependencies
-└── setup_models.py          # Downloads Kokoro model
-```
-
-### Client (`/client`)
-
-```
-client/
-├── src/
-│   ├── routes/
-│   │   ├── +page.svelte           # Root (redirects to login)
-│   │   ├── login/+page.svelte     # Login form
-│   │   └── player/+page.svelte    # Main TTS interface
-│   ├── lib/
-│   │   ├── components/
-│   │   │   ├── AudioPlayer.svelte   # Playback controls
-│   │   │   ├── TextInput.svelte     # Text entry + generation
-│   │   │   ├── TextDisplay.svelte   # Synchronized highlighting
-│   │   │   └── AudioHistory.svelte  # Saved audio list
-│   │   ├── stores/
-│   │   │   ├── auth.js              # Auth state
-│   │   │   ├── player.js            # Playback state
-│   │   │   └── history.js           # History refresh events
-│   │   └── services/
-│   │       ├── api.js               # HTTP client
-│   │       └── audioCache.js        # IndexedDB wrapper
-│   └── app.css                      # Tailwind styles
-└── static/
-    ├── manifest.json                # PWA manifest
-    └── sw.js                        # Service worker (disabled for now)
+openmobiletts/
+├── run.py                   # Single-command launcher
+├── Dockerfile               # Multi-stage Docker build
+├── docker-compose.yml       # Docker convenience wrapper
+├── server/
+│   ├── src/
+│   │   ├── main.py              # FastAPI app + API endpoints + static serving
+│   │   ├── tts_engine.py        # Kokoro TTS wrapper
+│   │   ├── text_preprocessor.py # Text normalization & chunking
+│   │   ├── audio_encoder.py     # MP3 encoding (pydub + ffmpeg)
+│   │   ├── document_processor.py# PDF/DOCX/TXT extraction
+│   │   └── config.py            # Settings & environment
+│   ├── tests/                   # Automated tests
+│   ├── requirements.txt         # Python dependencies
+│   └── setup_models.py          # Downloads Kokoro model
+├── client/
+│   ├── src/
+│   │   ├── routes/+page.svelte      # Main TTS interface
+│   │   ├── lib/components/          # UI components
+│   │   ├── lib/stores/              # State management
+│   │   └── lib/services/            # API client
+│   └── static/                      # PWA manifest
+└── docs/                            # Documentation
 ```
 
 ## Common Questions
@@ -237,7 +200,6 @@ client/
 
 **Mostly yes:**
 - After first model download, server works offline
-- PWA can work offline (service worker currently disabled but can be enabled)
 - No internet required for TTS generation
 
 ### Can I add more voices?
@@ -247,19 +209,17 @@ Yes! Kokoro supports custom voice training. You can:
 2. Download community-trained voices
 3. Use the 11 built-in voices
 
-See Kokoro documentation for voice training.
+### What happens if the app crashes mid-generation?
 
-### What happens if the server crashes mid-generation?
-
-- Client receives partial audio
-- Client shows warning if audio seems incomplete
+- Browser receives partial audio
+- Browser shows warning if audio seems incomplete
 - User can regenerate from the same text
-- No data loss (worst case: need to retry)
+- No data loss
 
 ### Why is generation slower for long texts?
 
 1. **Sequential processing**: Chunks processed one at a time
-2. **CPU bottleneck**: No GPU acceleration on your machine
+2. **CPU bottleneck**: No GPU acceleration
 3. **MP3 encoding**: Additional time to encode audio
 4. **Typical times**:
    - Short paragraph (50 words): ~2-3 seconds
@@ -268,66 +228,23 @@ See Kokoro documentation for voice training.
 
 ### Can I run this on a server/VPS?
 
-Yes! The server is designed to be deployed:
-- Docker support included
-- Can run on CPU-only servers
-- Multi-user capable (JWT auth)
+Yes! The app can be deployed via Docker:
+- `docker compose up --build`
+- Works on CPU-only servers
 - Recommended: 4GB+ RAM, 2+ CPU cores
 
 ### How much disk space does it use?
 
 - **Model**: ~320MB (one-time download)
-- **Server code**: ~50MB (Python dependencies)
-- **Client code**: ~10MB (built assets)
+- **Python deps**: ~400MB
+- **Client build**: ~10MB
 - **Cached audio**: Grows with usage (user can clear anytime)
 
 **Total initial install**: ~500MB
-
-## Performance Optimization Tips
-
-### Server Side
-
-1. **Use GPU if available**: 10-50x faster than CPU
-2. **Increase chunk size**: Faster but less granular timing
-3. **Pre-generate common phrases**: Cache frequently used audio
-
-### Client Side
-
-1. **Clear old history**: Saves IndexedDB space
-2. **Disable native audio controls**: Slightly less overhead
-3. **Use Chrome**: Best streaming performance
-
-## Troubleshooting
-
-### Model download fails
-
-```bash
-# Manually download model
-cd server
-python setup_models.py
-```
-
-### Audio is choppy or has gaps
-
-- Likely a streaming parser issue
-- Check browser console for errors
-- Try a shorter text first to verify setup
-
-### Generation is very slow
-
-- Normal for CPU (2-5x real-time)
-- For faster: use GPU-enabled machine
-- Consider shorter texts or batch processing
-
-### "No audio data received"
-
-- Server might have crashed
-- Check server logs: `tail -f /tmp/server.log`
-- Restart server: `cd server && python -m uvicorn src.main:app --reload`
 
 ## Next Steps
 
 See also:
 - [Technical Architecture](technical-architecture.md) - Detailed design decisions
 - [Implementation Status](implementation-status.md) - What's built vs. planned
-- [Testing Summary](testing-summary.md) - Test coverage & results
+- [Limits & Constraints](LIMITS_AND_CONSTRAINTS.md) - Full performance details
