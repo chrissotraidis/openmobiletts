@@ -49,21 +49,30 @@ async def list_voices():
     return tts_engine.available_voices
 
 
+# TTS request model for POST body
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = settings.DEFAULT_VOICE
+    speed: float = settings.DEFAULT_SPEED
+
+
 # TTS endpoints
-@app.get("/api/tts/stream")
-async def stream_tts(
-    text: str,
-    voice: str = settings.DEFAULT_VOICE,
-    speed: float = settings.DEFAULT_SPEED,
-):
+@app.post("/api/tts/stream")
+async def stream_tts(request: TTSRequest):
     """
     Stream TTS audio with timing metadata.
+
+    Uses POST to handle arbitrarily long text (no URL length limits).
 
     Protocol per chunk:
         1. TIMING:{json}\\n  — timing metadata
         2. AUDIO:{length}\\n  — byte count of following MP3 data
         3. {MP3 bytes}        — exactly {length} bytes of audio
     """
+    text = request.text
+    voice = request.voice
+    speed = request.speed
+
     if not text.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

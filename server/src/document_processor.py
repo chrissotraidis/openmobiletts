@@ -2,9 +2,8 @@
 
 import re
 from pathlib import Path
-from typing import Optional
 
-import pymupdf4llm
+import fitz  # PyMuPDF - for memory-efficient page-by-page extraction
 from docx import Document
 
 
@@ -46,9 +45,10 @@ class DocumentProcessor:
 
     def extract_pdf(self, filepath: str) -> str:
         """
-        Extract text from PDF preserving reading order.
+        Extract text from PDF using memory-efficient page-by-page extraction.
 
-        Uses pymupdf4llm for best multi-column and structure handling.
+        Uses PyMuPDF (fitz) directly for streaming extraction that handles
+        large files (100MB+) without loading the entire document into memory.
 
         Args:
             filepath: Path to PDF file
@@ -56,11 +56,27 @@ class DocumentProcessor:
         Returns:
             Extracted text in plain format
         """
-        # Extract as markdown (best for structure preservation)
-        markdown = pymupdf4llm.to_markdown(filepath, write_images=False)
+        doc = fitz.open(filepath)
+        text_parts = []
 
-        # Convert markdown to plain text suitable for TTS
-        return self._markdown_to_plain(markdown)
+        try:
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                # Extract text with layout preservation for better reading order
+                page_text = page.get_text("text")
+                if page_text.strip():
+                    text_parts.append(page_text.strip())
+        finally:
+            doc.close()
+
+        # Join pages with double newlines for paragraph structure
+        text = '\n\n'.join(text_parts)
+
+        # Clean up excessive whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' {2,}', ' ', text)
+
+        return text.strip()
 
     def extract_docx(self, filepath: str) -> str:
         """
@@ -92,43 +108,3 @@ class DocumentProcessor:
         """
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read()
-
-    def _markdown_to_plain(self, markdown: str) -> str:
-        """
-        Convert markdown to TTS-ready plain text.
-
-        Removes markdown formatting while preserving structure for natural speech.
-
-        Args:
-            markdown: Markdown-formatted text
-
-        Returns:
-            Plain text suitable for TTS
-        """
-        text = markdown
-
-        # Remove headings markers but keep the text
-        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-
-        # Remove bold/italic markers
-        text = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', text)
-        text = re.sub(r'_{1,2}([^_]+)_{1,2}', r'\1', text)
-
-        # Convert links [text](url) to just text
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-
-        # Remove inline code backticks
-        text = re.sub(r'`([^`]+)`', r'\1', text)
-
-        # Remove horizontal rules
-        text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
-
-        # Remove list markers (preserve text)
-        text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
-
-        # Clean up excessive whitespace
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r' {2,}', ' ', text)
-
-        return text.strip()

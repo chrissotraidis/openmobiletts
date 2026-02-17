@@ -27,7 +27,7 @@ class Settings:
     WORKERS: int = int(os.getenv("WORKERS", "1"))
 
     # File uploads
-    MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
+    MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "/tmp/openmobiletts_uploads")
 
     # Static files (built client) — auto-detected if empty
