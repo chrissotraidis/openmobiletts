@@ -18,10 +18,28 @@
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
 	const isBusy = $derived(isGenerating || isUploading);
 
+	// Speed slider mapping: 1.0x at center (50%)
+	// Position 0-50: 0.5x to 1.0x, Position 50-100: 1.0x to 2.0x
+	function speedToSlider(speed) {
+		if (speed <= 1.0) {
+			return (speed - 0.5) * 100; // 0.5→0, 1.0→50
+		} else {
+			return 50 + (speed - 1.0) * 50; // 1.0→50, 2.0→100
+		}
+	}
+
+	function sliderToSpeed(position) {
+		if (position <= 50) {
+			return 0.5 + (position / 100); // 0→0.5, 50→1.0
+		} else {
+			return 1.0 + ((position - 50) / 50); // 50→1.0, 100→2.0
+		}
+	}
+
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
 
-		historyStore.add({
+		const historyId = historyStore.add({
 			text: text.trim(),
 			voice: $settingsStore.defaultVoice,
 			speed: $settingsStore.defaultSpeed,
@@ -31,7 +49,8 @@
 			text.trim(),
 			$settingsStore.defaultVoice,
 			$settingsStore.defaultSpeed,
-			$settingsStore.autoPlay
+			$settingsStore.autoPlay,
+			historyId
 		);
 	}
 
@@ -140,9 +159,19 @@
 				</div>
 			</div>
 
-			<div class="flex items-center gap-1 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2">
+			<div class="flex items-center gap-2 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2">
 				<Clock size={12} class="text-slate-500" />
-				<span class="text-xs font-mono text-slate-300">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
+				<input
+					type="range"
+					min="0"
+					max="100"
+					step="1"
+					value={speedToSlider($settingsStore.defaultSpeed)}
+					oninput={(e) => settingsStore.update('defaultSpeed', Math.round(sliderToSpeed(parseFloat(e.target.value)) * 10) / 10)}
+					disabled={isBusy}
+					class="w-16 h-1 accent-blue-500"
+				/>
+				<span class="text-xs font-mono text-slate-300 w-8">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
 			</div>
 		</div>
 
@@ -163,6 +192,6 @@
 	</div>
 
 	<p class="text-[10px] text-slate-600 px-1">
-		Supports PDF, DOCX, and TXT files up to 10MB. Press Ctrl+Enter to generate.
+		Supports PDF, DOCX, and TXT files up to 100MB. Press Ctrl+Enter to generate.
 	</p>
 </div>

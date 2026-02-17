@@ -2,6 +2,7 @@
  * Player store — manages audio playback state, timing, and text highlighting.
  */
 import { writable, derived, get } from 'svelte/store';
+import { cacheAudio, getCachedAudio } from '$lib/services/audioCache';
 
 // Playback states
 export const PlayState = {
@@ -21,6 +22,7 @@ function createPlayerStore() {
 	const errorMessage = writable('');
 	const voice = writable('af_heart');
 	const speed = writable(1.0);
+	const playbackRate = writable(1.0); // Runtime playback speed (independent of generation speed)
 	const inputText = writable('');
 
 	// Internal: the audio element and blob URL
@@ -79,6 +81,7 @@ function createPlayerStore() {
 		errorMessage,
 		voice,
 		speed,
+		playbackRate,
 		inputText,
 
 		/**
@@ -87,8 +90,9 @@ function createPlayerStore() {
 		 * @param {string} voiceName - Voice to use
 		 * @param {number} speedVal - Speed multiplier
 		 * @param {boolean} autoPlay - Whether to auto-play when complete
+		 * @param {number|null} historyId - Optional history ID for caching
 		 */
-		async generate(text, voiceName, speedVal, autoPlay = true) {
+		async generate(text, voiceName, speedVal, autoPlay = true, historyId = null) {
 			resetAudio();
 			state.set(PlayState.GENERATING);
 			voice.set(voiceName);
@@ -97,13 +101,17 @@ function createPlayerStore() {
 			errorMessage.set('');
 
 			try {
-				const params = new URLSearchParams({
-					text,
-					voice: voiceName,
-					speed: String(speedVal),
+				// Use POST with JSON body to handle arbitrarily long text
+				// (GET query params have ~2KB-8KB length limits)
+				const response = await fetch('/api/tts/stream', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						text,
+						voice: voiceName,
+						speed: speedVal,
+					}),
 				});
-
-				const response = await fetch(`/api/tts/stream?${params}`);
 				if (!response.ok) {
 					const err = await response.json().catch(() => ({ detail: response.statusText }));
 					throw new Error(err.detail || 'TTS generation failed');
@@ -163,7 +171,13 @@ function createPlayerStore() {
 				const blob = new Blob(audioChunks, { type: 'audio/mpeg' });
 				blobUrl = URL.createObjectURL(blob);
 
+				// Cache the audio if historyId provided
+				if (historyId) {
+					cacheAudio(historyId, blob, timingData);
+				}
+
 				audioElement = new Audio(blobUrl);
+				audioElement.playbackRate = get(playbackRate); // Apply saved playback rate
 				timeUpdateHandler = updateActiveSegment;
 				audioElement.addEventListener('timeupdate', timeUpdateHandler);
 				audioElement.addEventListener('ended', handleEnded);
@@ -185,6 +199,72 @@ function createPlayerStore() {
 			} catch (err) {
 				errorMessage.set(err.message);
 				state.set(PlayState.ERROR);
+			}
+		},
+
+		/**
+		 * Play from cache if available, otherwise regenerate.
+		 * @param {object} entry - History entry with id, text, voice, speed
+		 * @param {boolean} autoPlay - Whether to auto-play
+		 */
+		async playFromHistory(entry, autoPlay = true) {
+			// Check cache first with a timeout
+			let cached = null;
+			try {
+				const cachePromise = getCachedAudio(entry.id);
+				const timeoutPromise = new Promise((_, reject) =>
+					setTimeout(() => reject(new Error('Cache timeout')), 5000)
+				);
+				cached = await Promise.race([cachePromise, timeoutPromise]);
+			} catch (err) {
+				console.warn('Cache retrieval failed:', err.message);
+				cached = null;
+			}
+
+			if (cached) {
+				// Play from cache
+				resetAudio();
+				state.set(PlayState.GENERATING); // Brief loading state
+				voice.set(entry.voice);
+				speed.set(entry.speed);
+				inputText.set(entry.text);
+				errorMessage.set('');
+
+				try {
+					// Convert blob to ArrayBuffer and store in audioChunks for download support
+					const arrayBuffer = await cached.blob.arrayBuffer();
+					audioChunks = [new Uint8Array(arrayBuffer)];
+
+					blobUrl = URL.createObjectURL(cached.blob);
+					timingData = cached.timingData || [];
+					segments.set(timingData);
+
+					audioElement = new Audio(blobUrl);
+					audioElement.playbackRate = get(playbackRate);
+					timeUpdateHandler = updateActiveSegment;
+					audioElement.addEventListener('timeupdate', timeUpdateHandler);
+					audioElement.addEventListener('ended', handleEnded);
+
+					await new Promise((resolve, reject) => {
+						audioElement.addEventListener('loadedmetadata', resolve, { once: true });
+						audioElement.addEventListener('error', reject, { once: true });
+					});
+
+					duration.set(audioElement.duration);
+
+					if (autoPlay) {
+						audioElement.play();
+						state.set(PlayState.PLAYING);
+					} else {
+						state.set(PlayState.PAUSED);
+					}
+				} catch (err) {
+					errorMessage.set(err.message);
+					state.set(PlayState.ERROR);
+				}
+			} else {
+				// No cache, regenerate and cache
+				await this.generate(entry.text, entry.voice, entry.speed, autoPlay, entry.id);
 			}
 		},
 
@@ -215,8 +295,23 @@ function createPlayerStore() {
 			}
 		},
 
+		setPlaybackRate(rate) {
+			playbackRate.set(rate);
+			if (audioElement) {
+				audioElement.playbackRate = rate;
+			}
+		},
+
 		getAudioElement() {
 			return audioElement;
+		},
+
+		getAudioBlob() {
+			// Return the current audio as a blob for download
+			if (audioChunks.length > 0) {
+				return new Blob(audioChunks, { type: 'audio/mpeg' });
+			}
+			return null;
 		},
 	};
 }

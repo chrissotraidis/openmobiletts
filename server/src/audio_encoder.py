@@ -32,33 +32,38 @@ class AudioEncoder:
         self.channels = channels or settings.MP3_CHANNELS
 
     def encode_to_mp3(
-        self, audio_data: np.ndarray, source_sample_rate: int = 24000
+        self, audio_data, source_sample_rate: int = 24000
     ) -> Tuple[bytes, float]:
         """
-        Encode numpy audio array to MP3 bytes.
+        Encode audio array to MP3 bytes.
 
         Args:
-            audio_data: Audio as numpy array (from Kokoro)
+            audio_data: Audio as numpy array or PyTorch tensor (from Kokoro)
             source_sample_rate: Sample rate of input audio (Kokoro outputs 24kHz)
 
         Returns:
             Tuple of (MP3 bytes, duration in seconds)
         """
-        # Convert numpy array to WAV in memory
-        wav_buffer = BytesIO()
-        sf.write(
-            wav_buffer,
-            audio_data,
-            source_sample_rate,
-            format='WAV',
-            subtype='PCM_16',
+        # Convert PyTorch tensor to numpy if needed
+        if hasattr(audio_data, 'numpy'):
+            audio_data = audio_data.cpu().numpy() if hasattr(audio_data, 'cpu') else audio_data.numpy()
+
+        # Convert float32 [-1, 1] to int16 directly (skip WAV intermediate)
+        if audio_data.dtype == np.float32 or audio_data.dtype == np.float64:
+            # Clip to prevent overflow, then scale to int16 range
+            audio_int16 = (np.clip(audio_data, -1.0, 1.0) * 32767).astype(np.int16)
+        else:
+            audio_int16 = audio_data.astype(np.int16)
+
+        # Create AudioSegment directly from raw bytes (skips WAV encode/decode)
+        audio_segment = AudioSegment(
+            data=audio_int16.tobytes(),
+            sample_width=2,  # 16-bit = 2 bytes
+            frame_rate=source_sample_rate,
+            channels=1,  # Kokoro outputs mono
         )
-        wav_buffer.seek(0)
 
-        # Load WAV and convert to MP3
-        audio_segment = AudioSegment.from_file(wav_buffer, format='wav')
-
-        # Resample and convert to mono if needed
+        # Resample if needed (from 24kHz to target, e.g., 22050Hz)
         if audio_segment.frame_rate != self.sample_rate:
             audio_segment = audio_segment.set_frame_rate(self.sample_rate)
 

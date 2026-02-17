@@ -5,6 +5,7 @@
 	import TextInput from '$lib/components/TextInput.svelte';
 	import TextDisplay from '$lib/components/TextDisplay.svelte';
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
+	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
 	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown } from 'lucide-svelte';
 
@@ -16,20 +17,41 @@
 			isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 		}
 	});
+
+	// Speed slider mapping: 1.0x at center (50%)
+	// Position 0-50: 0.5x to 1.0x, Position 50-100: 1.0x to 2.0x
+	function speedToSlider(speed) {
+		if (speed <= 1.0) {
+			return (speed - 0.5) * 100; // 0.5→0, 1.0→50
+		} else {
+			return 50 + (speed - 1.0) * 50; // 1.0→50, 2.0→100
+		}
+	}
+
+	function sliderToSpeed(position) {
+		if (position <= 50) {
+			return 0.5 + (position / 100); // 0→0.5, 50→1.0
+		} else {
+			return 1.0 + ((position - 50) / 50); // 50→1.0, 100→2.0
+		}
+	}
 </script>
 
 <div class="flex h-screen w-full bg-[#0a0c10] text-slate-200 overflow-hidden">
 
 	<!-- DESKTOP SIDEBAR -->
 	<aside class="hidden md:flex w-64 border-r border-white/5 flex-col p-4 shrink-0">
-		<div class="flex items-center gap-2 px-2 mb-8">
+		<button
+			onclick={() => { activeTab = 'generate'; }}
+			class="flex items-center gap-2 px-2 mb-8 hover:opacity-80 transition-opacity cursor-pointer"
+		>
 			<div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
 				<Mic size={18} class="text-white" />
 			</div>
 			<h1 class="font-bold text-lg tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
 				Open Mobile TTS
 			</h1>
-		</div>
+		</button>
 
 		<nav class="space-y-1 flex-1">
 			<button
@@ -75,9 +97,12 @@
 		<!-- TOP BAR -->
 		<header class="h-14 border-b border-white/5 flex items-center justify-between px-4 md:px-8 bg-[#0a0c10]/50 backdrop-blur-md z-20 shrink-0">
 			<div class="flex items-center gap-3">
-				<div class="md:hidden w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+				<button
+					onclick={() => { activeTab = 'generate'; }}
+					class="md:hidden w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
+				>
 					<Mic size={16} class="text-white" />
-				</div>
+				</button>
 				<h2 class="text-sm font-semibold md:font-medium text-slate-300 md:text-slate-400">
 					{#if activeTab === 'generate'}
 						Generate Speech
@@ -88,12 +113,6 @@
 					{/if}
 				</h2>
 			</div>
-			<div class="flex items-center gap-3">
-				<div class="hidden sm:flex items-center gap-2 px-3 py-1 bg-blue-600/10 border border-blue-500/20 rounded-full">
-					<Zap size={12} class="text-blue-400" />
-					<span class="text-[10px] font-bold text-blue-400 tracking-wider">LOCAL ENGINE</span>
-				</div>
-			</div>
 		</header>
 
 		<!-- SCROLLABLE VIEW -->
@@ -101,6 +120,7 @@
 			{#if activeTab === 'generate'}
 				<div class="max-w-4xl mx-auto space-y-6 md:space-y-8">
 					<TextInput />
+					<GenerationProgress />
 					<TextDisplay />
 				</div>
 			{:else if activeTab === 'history'}
@@ -155,15 +175,21 @@
 								</div>
 								<span class="text-xs font-mono text-blue-400">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
 							</div>
-							<div class="px-2 py-3">
+							<div class="py-3">
 								<input
 									type="range"
-									min="0.5"
-									max="2.0"
-									step="0.1"
-									value={$settingsStore.defaultSpeed}
-									oninput={(e) => settingsStore.update('defaultSpeed', parseFloat(e.target.value))}
+									min="0"
+									max="100"
+									step="1"
+									value={speedToSlider($settingsStore.defaultSpeed)}
+									oninput={(e) => settingsStore.update('defaultSpeed', Math.round(sliderToSpeed(parseFloat(e.target.value)) * 10) / 10)}
+									class="w-full h-2 accent-blue-500 cursor-pointer"
 								/>
+							</div>
+							<div class="flex text-[10px] text-slate-600">
+								<span class="flex-1 text-left">0.5x</span>
+								<span class="flex-1 text-center">1.0x</span>
+								<span class="flex-1 text-right">2.0x</span>
 							</div>
 						</div>
 

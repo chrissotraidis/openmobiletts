@@ -1,7 +1,7 @@
 """Kokoro TTS engine wrapper with streaming support."""
 
 import asyncio
-import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Dict, List, Tuple
 
 import numpy as np
@@ -9,6 +9,9 @@ from kokoro import KPipeline
 
 from .audio_encoder import StreamingAudioEncoder
 from .config import settings
+
+# Thread pool for parallel encoding
+_encoder_pool = ThreadPoolExecutor(max_workers=2)
 
 
 class TTSEngine:
@@ -72,7 +75,7 @@ class TTSEngine:
 
     async def generate_speech_stream(
         self,
-        text_chunks: List[str],
+        text_chunks: List[Dict],
         voice: str = None,
         speed: float = None,
     ) -> AsyncGenerator[Tuple[bytes, Dict], None]:
@@ -82,8 +85,11 @@ class TTSEngine:
         This is the core streaming method that yields MP3 chunks with timing info
         as they're generated, enabling real-time playback on the client.
 
+        Uses parallel encoding: MP3 encoding runs in a thread pool while
+        Kokoro continues generating the next segment.
+
         Args:
-            text_chunks: List of text chunks to convert to speech
+            text_chunks: List of chunk dicts with 'text' and 'starts_paragraph' keys
             voice: Voice to use (defaults to default_voice)
             speed: Speech speed multiplier (defaults to default_speed)
 
@@ -94,8 +100,14 @@ class TTSEngine:
         speed = speed or self.default_speed
 
         cumulative_time = 0.0
+        pending_encode = None  # Future for encoding previous segment
+        pending_meta = None    # Metadata for pending encode
 
-        for chunk_index, text_chunk in enumerate(text_chunks):
+        for chunk_index, chunk_data in enumerate(text_chunks):
+            # Extract text and paragraph info from chunk dict
+            text_chunk = chunk_data['text']
+            starts_paragraph = chunk_data.get('starts_paragraph', False)
+
             # Generate audio using Kokoro's generator
             generator = self.pipeline(
                 text_chunk,
@@ -103,26 +115,42 @@ class TTSEngine:
                 speed=speed,
             )
 
+            # Track if this is the first segment of this chunk
+            is_first_segment = True
+
             # Process each audio segment from the generator
             for graphemes, phonemes, audio_array in generator:
-                # Encode to MP3
-                mp3_bytes, duration = self.encoder.encode_chunk(audio_array)
+                # If there's a pending encode from previous iteration, wait for it
+                if pending_encode is not None:
+                    mp3_bytes, duration = await asyncio.wrap_future(pending_encode)
+                    pending_meta['end'] = pending_meta['start'] + duration
+                    cumulative_time = pending_meta['end']
+                    yield mp3_bytes, pending_meta
 
-                # Create timing metadata
-                timing = {
+                # Start encoding current segment in thread pool (non-blocking)
+                loop = asyncio.get_event_loop()
+                pending_encode = loop.run_in_executor(
+                    _encoder_pool,
+                    self.encoder.encode_chunk,
+                    audio_array,
+                )
+                pending_meta = {
                     'text': graphemes,
                     'start': cumulative_time,
-                    'end': cumulative_time + duration,
+                    'end': 0,  # Will be filled when encode completes
                     'chunk_index': chunk_index,
+                    'starts_paragraph': starts_paragraph and is_first_segment,
                 }
+                is_first_segment = False
 
-                cumulative_time += duration
-
-                # Yield timing metadata and audio
-                yield mp3_bytes, timing
-
-                # Yield control to allow other async operations
+                # Yield control to allow concurrent operations
                 await asyncio.sleep(0)
+
+        # Yield final pending segment
+        if pending_encode is not None:
+            mp3_bytes, duration = await asyncio.wrap_future(pending_encode)
+            pending_meta['end'] = pending_meta['start'] + duration
+            yield mp3_bytes, pending_meta
 
     def generate_speech(
         self,

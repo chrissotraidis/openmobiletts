@@ -33,6 +33,37 @@
 			}
 		}
 	});
+
+	// Split segment text into words for fine-grained clicking
+	function getWords(text) {
+		return text.split(/(\s+)/).filter(w => w.length > 0);
+	}
+
+	// Calculate interpolated time for a word within a segment
+	function getWordTime(segment, wordIndex, totalWords) {
+		if (typeof segment.start !== 'number' || typeof segment.end !== 'number') {
+			return segment.start;
+		}
+		const duration = segment.end - segment.start;
+		// Count only actual words (not whitespace) for position calculation
+		const words = getWords(segment.text).filter(w => w.trim().length > 0);
+		const actualWordIndex = Math.min(wordIndex, words.length - 1);
+		const progress = words.length > 1 ? actualWordIndex / (words.length - 1) : 0;
+		return segment.start + (duration * progress * 0.9); // 0.9 to not overshoot
+	}
+
+	// Click/tap to seek to word position within segment
+	function handleWordClick(segment, wordIndex) {
+		if (playerState === PlayState.GENERATING) return;
+		if (typeof segment.start === 'number') {
+			const words = getWords(segment.text).filter(w => w.trim().length > 0);
+			const seekTime = getWordTime(segment, wordIndex, words.length);
+			playerStore.seek(seekTime);
+			if (playerState === PlayState.PAUSED) {
+				playerStore.play();
+			}
+		}
+	}
 </script>
 
 {#if isActive && segments.length > 0}
@@ -49,16 +80,21 @@
 
 		<div
 			bind:this={scrollContainer}
-			class="text-[15px] leading-relaxed text-slate-300 max-h-[400px] overflow-y-auto custom-scrollbar space-y-1"
+			class="text-[15px] leading-relaxed text-slate-300 max-h-[400px] overflow-y-auto custom-scrollbar"
 		>
-			{#each segments as segment, i}
-				<span
-					data-segment={i}
-					class="text-segment inline {i === activeIndex ? 'highlighted' : ''}"
-				>
-					{segment.text}
-				</span>
-				{' '}
+			{#each segments as segment, segIdx}
+				{@const words = getWords(segment.text)}
+				{@const isClickable = playerState !== PlayState.GENERATING}
+				{#if segment.starts_paragraph && segIdx > 0}<br><br>{/if}<span
+					data-segment={segIdx}
+					class="text-segment {segIdx === activeIndex ? 'highlighted' : ''}"
+				>{#each words as word, wordIdx}{#if word.trim().length === 0}{word}{:else}<span
+							class="{isClickable ? 'cursor-pointer hover:text-blue-300 transition-colors' : ''}"
+							onclick={() => handleWordClick(segment, words.slice(0, wordIdx).filter(w => w.trim().length > 0).length)}
+							role="button"
+							tabindex="0"
+							onkeydown={(e) => e.key === 'Enter' && handleWordClick(segment, words.slice(0, wordIdx).filter(w => w.trim().length > 0).length)}
+						>{word}</span>{/if}{/each}</span>{' '}
 			{/each}
 		</div>
 	</div>

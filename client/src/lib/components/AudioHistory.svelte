@@ -1,13 +1,29 @@
 <script>
 	import { historyStore } from '$lib/stores/history';
-	import { playerStore } from '$lib/stores/player';
+	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
-	import { Play, Trash2, Clock, Volume2 } from 'lucide-svelte';
+	import { getCachedAudio } from '$lib/services/audioCache';
+	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
 	let history = $state([]);
-	const unsubHistory = historyStore.subscribe((h) => (history = h));
-	onDestroy(unsubHistory);
+	let showClearModal = $state(false);
+	let showDeleteModal = $state(false);
+	let pendingDeleteEntry = $state(null);
+	let loadingEntryId = $state(null);
+	let playerState = $state(PlayState.IDLE);
+
+	const unsubs = [
+		historyStore.subscribe((h) => (history = h)),
+		playerStore.state.subscribe((s) => {
+			playerState = s;
+			// Clear loading state when playback starts or errors
+			if (s === PlayState.PLAYING || s === PlayState.PAUSED || s === PlayState.ERROR) {
+				loadingEntryId = null;
+			}
+		}),
+	];
+	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const voiceDisplayNames = {
 		af_heart: 'Heart',
@@ -23,8 +39,49 @@
 		bm_lewis: 'Lewis',
 	};
 
-	function regenerate(entry) {
-		playerStore.generate(entry.text, entry.voice, entry.speed, $settingsStore.autoPlay);
+	function playEntry(entry) {
+		loadingEntryId = entry.id;
+		// Uses cache if available, otherwise regenerates
+		playerStore.playFromHistory(entry, $settingsStore.autoPlay);
+	}
+
+	function handleClearAll() {
+		historyStore.clear();
+		showClearModal = false;
+	}
+
+	function confirmDelete(entry) {
+		pendingDeleteEntry = entry;
+		showDeleteModal = true;
+	}
+
+	function handleDelete() {
+		if (pendingDeleteEntry) {
+			historyStore.remove(pendingDeleteEntry.id);
+		}
+		showDeleteModal = false;
+		pendingDeleteEntry = null;
+	}
+
+	async function downloadEntry(entry) {
+		const cached = await getCachedAudio(entry.id);
+		if (!cached?.blob) {
+			// Audio not cached - would need to regenerate
+			return;
+		}
+
+		const date = new Date(entry.createdAt).toISOString().slice(0, 10);
+		const voice = voiceDisplayNames[entry.voice] || entry.voice;
+		const filename = `tts-${date}-${voice.toLowerCase()}-${entry.speed?.toFixed(1) || '1.0'}x.mp3`;
+
+		const url = URL.createObjectURL(cached.blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
 	}
 
 	function formatDate(iso) {
@@ -39,6 +96,75 @@
 	}
 </script>
 
+<!-- Clear All Confirmation Modal -->
+{#if showClearModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick={() => showClearModal = false}>
+		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
+					<AlertTriangle size={20} class="text-red-400" />
+				</div>
+				<h3 class="text-lg font-semibold text-slate-200">Clear History</h3>
+			</div>
+			<p class="text-sm text-slate-400 mb-6">
+				This will permanently delete all {history.length} generation{history.length !== 1 ? 's' : ''} and their cached audio. This action cannot be undone.
+			</p>
+			<div class="flex gap-3">
+				<button
+					onclick={() => showClearModal = false}
+					class="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-medium transition-colors"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={handleClearAll}
+					class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium transition-colors"
+				>
+					Clear All
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Delete Single Entry Confirmation Modal -->
+{#if showDeleteModal && pendingDeleteEntry}
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick={() => { showDeleteModal = false; pendingDeleteEntry = null; }}>
+		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
+					<AlertTriangle size={20} class="text-red-400" />
+				</div>
+				<h3 class="text-lg font-semibold text-slate-200">Delete Generation?</h3>
+			</div>
+			<p class="text-sm text-slate-400 mb-2">
+				This will permanently delete this generation and its cached audio.
+			</p>
+			<p class="text-xs text-slate-500 mb-6 line-clamp-2">
+				"{pendingDeleteEntry.preview}"
+			</p>
+			<div class="flex gap-3">
+				<button
+					onclick={() => { showDeleteModal = false; pendingDeleteEntry = null; }}
+					class="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-medium transition-colors"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={handleDelete}
+					class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium transition-colors"
+				>
+					Delete
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if history.length === 0}
 	<div class="flex flex-col items-center justify-center py-20 text-center">
 		<div class="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-4">
@@ -52,7 +178,7 @@
 		<div class="flex items-center justify-between mb-4">
 			<h3 class="text-sm font-semibold text-slate-400">{history.length} generation{history.length !== 1 ? 's' : ''}</h3>
 			<button
-				onclick={() => { if (confirm('Clear all history?')) historyStore.clear(); }}
+				onclick={() => showClearModal = true}
 				class="text-[10px] text-slate-600 hover:text-red-400 transition-colors"
 			>
 				Clear all
@@ -60,14 +186,20 @@
 		</div>
 
 		{#each history as entry (entry.id)}
-			<div class="group p-4 bg-slate-900/40 border border-white/5 rounded-xl hover:bg-slate-900/60 transition-colors">
+			{@const isLoading = loadingEntryId === entry.id}
+			<div class="group p-4 bg-slate-900/40 border border-white/5 rounded-xl hover:bg-slate-900/60 transition-colors {isLoading ? 'border-blue-500/30' : ''}">
 				<div class="flex items-start gap-3">
 					<!-- Play button -->
 					<button
-						onclick={() => regenerate(entry)}
-						class="w-9 h-9 bg-blue-600/10 hover:bg-blue-600 rounded-lg flex items-center justify-center transition-colors shrink-0 mt-0.5"
+						onclick={() => playEntry(entry)}
+						disabled={isLoading}
+						class="w-9 h-9 bg-blue-600/10 hover:bg-blue-600 rounded-lg flex items-center justify-center transition-colors shrink-0 mt-0.5 {isLoading ? 'bg-blue-600' : ''}"
 					>
-						<Play size={14} class="text-blue-400 group-hover:text-white ml-0.5" />
+						{#if isLoading}
+							<Loader2 size={14} class="text-white animate-spin" />
+						{:else}
+							<Play size={14} class="text-blue-400 group-hover:text-white ml-0.5" />
+						{/if}
 					</button>
 
 					<!-- Content -->
@@ -80,12 +212,24 @@
 							</span>
 							<span class="text-[10px] text-slate-600 font-mono">{entry.speed?.toFixed(1) || '1.0'}x</span>
 							<span class="text-[10px] text-slate-600">{formatDate(entry.createdAt)}</span>
+							{#if isLoading}
+								<span class="text-[10px] text-blue-400">Loading...</span>
+							{/if}
 						</div>
 					</div>
 
+					<!-- Download -->
+					<button
+						onclick={() => downloadEntry(entry)}
+						class="p-1.5 text-slate-700 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+						title="Download MP3"
+					>
+						<Download size={14} />
+					</button>
+
 					<!-- Delete -->
 					<button
-						onclick={() => historyStore.remove(entry.id)}
+						onclick={() => confirmDelete(entry)}
 						class="p-1.5 text-slate-700 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
 						title="Remove"
 					>
