@@ -137,7 +137,7 @@ class SherpaOnnxBackend(TTSBackend):
 
             # Generate audio for the entire chunk synchronously
             # (sherpa-onnx doesn't have a sentence-level generator like Kokoro)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             audio = await loop.run_in_executor(
                 None,
                 lambda t=text_chunk, s=sid, sp=speed: self.tts.generate(t, sid=s, speed=sp),

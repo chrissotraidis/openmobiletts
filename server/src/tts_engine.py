@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, Dict, List, Tuple
 
 import numpy as np
-from kokoro import KPipeline
 
 from .audio_encoder import StreamingAudioEncoder
 from .config import settings
@@ -24,6 +23,8 @@ class KokoroBackend(TTSBackend):
         default_voice: str = None,
         default_speed: float = None,
     ):
+        from kokoro import KPipeline
+
         self.lang_code = lang_code or settings.KOKORO_LANG_CODE
         self.default_voice = default_voice or settings.DEFAULT_VOICE
         self.default_speed = default_speed or settings.DEFAULT_SPEED
@@ -96,7 +97,7 @@ class KokoroBackend(TTSBackend):
                     cumulative_time = pending_meta['end']
                     yield mp3_bytes, pending_meta
 
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 pending_encode = loop.run_in_executor(
                     _encoder_pool,
                     self.encoder.encode_chunk,
