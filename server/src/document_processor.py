@@ -6,6 +6,10 @@ from pathlib import Path
 import fitz  # PyMuPDF - for memory-efficient page-by-page extraction
 from docx import Document
 
+from .logging_config import get_logger, preview_text
+
+logger = get_logger(__name__)
+
 
 class DocumentProcessor:
     """Extract text from PDF and DOCX documents."""
@@ -27,21 +31,29 @@ class DocumentProcessor:
         """
         path = Path(filepath)
         suffix = path.suffix.lower()
+        file_size = path.stat().st_size
+
+        logger.info(f"Extracting document: {path.name} ({suffix}, {file_size} bytes)")
 
         if suffix not in self.SUPPORTED_FORMATS:
+            logger.error(f"Unsupported file format: {suffix}")
             raise ValueError(
                 f"Unsupported file format: {suffix}. "
                 f"Supported formats: {', '.join(self.SUPPORTED_FORMATS)}"
             )
 
         if suffix == '.pdf':
-            return self.extract_pdf(filepath)
+            text = self.extract_pdf(filepath)
         elif suffix == '.docx':
-            return self.extract_docx(filepath)
+            text = self.extract_docx(filepath)
         elif suffix == '.txt':
-            return self.extract_txt(filepath)
+            text = self.extract_txt(filepath)
+        else:
+            raise ValueError(f"Unsupported format: {suffix}")
 
-        raise ValueError(f"Unsupported format: {suffix}")
+        logger.info(f"Extracted {len(text)} chars from {path.name}")
+        logger.debug(f"Extracted text preview: {preview_text(text, 300)}")
+        return text
 
     def extract_pdf(self, filepath: str) -> str:
         """
@@ -60,21 +72,29 @@ class DocumentProcessor:
         text_parts = []
 
         try:
-            for page_num in range(len(doc)):
+            total_pages = len(doc)
+            logger.debug(f"PDF has {total_pages} pages")
+
+            for page_num in range(total_pages):
                 page = doc[page_num]
                 # Extract text with layout preservation for better reading order
                 page_text = page.get_text("text")
                 if page_text.strip():
                     text_parts.append(page_text.strip())
+                    logger.debug(f"Page {page_num + 1}: {len(page_text)} chars extracted")
         finally:
             doc.close()
 
         # Join pages with double newlines for paragraph structure
         text = '\n\n'.join(text_parts)
+        pre_cleanup_len = len(text)
+        pre_cleanup_newlines = text.count('\n')
 
         # Clean up excessive whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r' {2,}', ' ', text)
+
+        logger.debug(f"PDF cleanup: {pre_cleanup_len} -> {len(text)} chars, {pre_cleanup_newlines} -> {text.count(chr(10))} newlines")
 
         return text.strip()
 
@@ -107,4 +127,6 @@ class DocumentProcessor:
             File contents
         """
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read()
+            text = f.read()
+        logger.debug(f"TXT file: {len(text)} chars, {text.count(chr(10))} newlines")
+        return text

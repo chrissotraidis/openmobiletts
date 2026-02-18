@@ -2,7 +2,7 @@
 	import { historyStore } from '$lib/stores/history';
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
-	import { getCachedAudio } from '$lib/services/audioCache';
+	import { getCachedAudio, cacheAudio } from '$lib/services/audioCache';
 	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
@@ -11,6 +11,7 @@
 	let showDeleteModal = $state(false);
 	let pendingDeleteEntry = $state(null);
 	let loadingEntryId = $state(null);
+	let downloadingEntryIds = $state(new Set());
 	let playerState = $state(PlayState.IDLE);
 
 	const unsubs = [
@@ -64,24 +65,97 @@
 	}
 
 	async function downloadEntry(entry) {
-		const cached = await getCachedAudio(entry.id);
-		if (!cached?.blob) {
-			// Audio not cached - would need to regenerate
-			return;
+		// Track this download (allow multiple concurrent downloads)
+		downloadingEntryIds = new Set([...downloadingEntryIds, entry.id]);
+
+		try {
+			// Try cache first
+			let cached = await getCachedAudio(entry.id);
+			let blob = cached?.blob;
+
+			// If not cached, regenerate the audio
+			if (!blob) {
+				const response = await fetch('/api/tts/stream', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						text: entry.text,
+						voice: entry.voice,
+						speed: entry.speed || 1.0,
+					}),
+				});
+
+				if (!response.ok) {
+					throw new Error('Failed to generate audio');
+				}
+
+				// Parse streaming response to extract audio chunks
+				const reader = response.body.getReader();
+				const audioChunks = [];
+				const timingData = [];
+				let buffer = new Uint8Array(0);
+				let pendingAudioBytes = 0;
+
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+
+					const combined = new Uint8Array(buffer.length + value.length);
+					combined.set(buffer);
+					combined.set(value, buffer.length);
+					buffer = combined;
+
+					while (buffer.length > 0) {
+						if (pendingAudioBytes > 0) {
+							if (buffer.length < pendingAudioBytes) break;
+							audioChunks.push(buffer.slice(0, pendingAudioBytes));
+							buffer = buffer.slice(pendingAudioBytes);
+							pendingAudioBytes = 0;
+							continue;
+						}
+
+						const newlineIdx = buffer.indexOf(10);
+						if (newlineIdx === -1) break;
+
+						const line = new TextDecoder().decode(buffer.slice(0, newlineIdx));
+						buffer = buffer.slice(newlineIdx + 1);
+
+						if (line.startsWith('TIMING:')) {
+							timingData.push(JSON.parse(line.slice(7)));
+						} else if (line.startsWith('AUDIO:')) {
+							pendingAudioBytes = parseInt(line.slice(6), 10);
+						}
+					}
+				}
+
+				blob = new Blob(audioChunks, { type: 'audio/mpeg' });
+
+				// Cache for future use
+				await cacheAudio(entry.id, blob, timingData);
+			}
+
+			// Trigger download
+			const date = new Date(entry.createdAt).toISOString().slice(0, 10);
+			const voice = voiceDisplayNames[entry.voice] || entry.voice;
+			const filename = `tts-${date}-${voice.toLowerCase()}-${entry.speed?.toFixed(1) || '1.0'}x.mp3`;
+
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			// Delay URL revocation to ensure browser has time to start download
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		} catch (err) {
+			console.error('Download failed:', err);
+		} finally {
+			// Remove from downloading set
+			const newSet = new Set(downloadingEntryIds);
+			newSet.delete(entry.id);
+			downloadingEntryIds = newSet;
 		}
-
-		const date = new Date(entry.createdAt).toISOString().slice(0, 10);
-		const voice = voiceDisplayNames[entry.voice] || entry.voice;
-		const filename = `tts-${date}-${voice.toLowerCase()}-${entry.speed?.toFixed(1) || '1.0'}x.mp3`;
-
-		const url = URL.createObjectURL(cached.blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
 	}
 
 	function formatDate(iso) {
@@ -221,10 +295,15 @@
 					<!-- Download -->
 					<button
 						onclick={() => downloadEntry(entry)}
-						class="p-1.5 text-slate-700 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+						disabled={downloadingEntryIds.has(entry.id)}
+						class="p-1.5 text-slate-700 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:text-blue-400"
 						title="Download MP3"
 					>
-						<Download size={14} />
+						{#if downloadingEntryIds.has(entry.id)}
+							<Loader2 size={14} class="animate-spin" />
+						{:else}
+							<Download size={14} />
+						{/if}
 					</button>
 
 					<!-- Delete -->

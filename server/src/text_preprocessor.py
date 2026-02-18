@@ -7,6 +7,9 @@ from typing import List
 from num2words import num2words
 
 from .config import settings
+from .logging_config import get_logger, preview_text
+
+logger = get_logger(__name__)
 
 
 class TextPreprocessor:
@@ -82,6 +85,13 @@ class TextPreprocessor:
         Returns:
             Normalized text ready for TTS
         """
+        original_len = len(text)
+        original_newlines = text.count('\n')
+        original_paragraphs = text.count('\n\n') + 1
+
+        logger.debug(f"Normalize input: {original_len} chars, {original_newlines} newlines, ~{original_paragraphs} paragraphs")
+        logger.debug(f"Input preview: {preview_text(text, 300)}")
+
         # 1. Normalize Unicode (NFKC handles ligatures, special chars)
         text = unicodedata.normalize('NFKC', text)
 
@@ -112,16 +122,42 @@ class TextPreprocessor:
         # 8. Clean up whitespace while PRESERVING paragraph breaks
         # First normalize line endings
         text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Count paragraphs before whitespace normalization
+        pre_whitespace_paragraphs = text.count('\n\n') + 1
+
         # Collapse multiple spaces (but not newlines) to single space
         text = re.sub(r'[^\S\n]+', ' ', text)
         # Normalize paragraph breaks: 2+ newlines become double newline
         text = re.sub(r'\n{2,}', '\n\n', text)
-        # Single newlines within paragraphs become spaces (soft wrap)
-        text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+
+        # Handle single newlines intelligently:
+        # - If line ends with sentence punctuation (.!?) and next line starts with
+        #   uppercase or number, treat as paragraph break (convert to double newline)
+        # - Otherwise convert to space (soft wrap)
+        def handle_single_newline(match):
+            before = match.group(1)  # Character before newline
+            after = match.group(2)   # Character after newline
+            # Sentence end followed by new sentence = paragraph break
+            if before in '.!?:' and (after.isupper() or after.isdigit()):
+                return before + '\n\n' + after
+            # Otherwise it's a soft wrap
+            return before + ' ' + after
+
+        # Match: char + single newline (not preceded/followed by newline) + char
+        text = re.sub(r'([^\n])\n(?!\n)([^\n])', handle_single_newline, text)
+
         # Clean up spaces around paragraph breaks
         text = re.sub(r' *\n\n *', '\n\n', text)
         # Strip leading/trailing whitespace from each line
         text = '\n\n'.join(line.strip() for line in text.split('\n\n'))
+
+        final_len = len(text)
+        final_newlines = text.count('\n')
+        final_paragraphs = text.count('\n\n') + 1
+
+        logger.info(f"Normalize: {original_len} -> {final_len} chars, {original_newlines} -> {final_newlines} newlines, {pre_whitespace_paragraphs} -> {final_paragraphs} paragraphs")
+        logger.debug(f"Output preview: {preview_text(text, 300)}")
 
         return text.strip()
 
@@ -374,5 +410,8 @@ class TextPreprocessor:
         Returns:
             List of chunk dicts: [{"text": str, "starts_paragraph": bool}, ...]
         """
+        logger.info(f"Processing text: {len(text)} chars input")
         normalized = self.normalize(text)
-        return self.chunk_text(normalized)
+        chunks = self.chunk_text(normalized)
+        logger.info(f"Processing complete: {len(chunks)} chunks created")
+        return chunks

@@ -55,12 +55,13 @@ export function getCacheKey(text, voice, speed) {
  */
 export async function cacheAudio(historyId, blob, timingData) {
 	try {
+		// Convert blob to ArrayBuffer BEFORE starting transaction
+		// (IndexedDB transactions auto-commit when awaiting non-transaction operations)
+		const arrayBuffer = await blob.arrayBuffer();
+
 		const database = await initDB();
 		const transaction = database.transaction([STORE_NAME], 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-
-		// Convert blob to ArrayBuffer for storage
-		const arrayBuffer = await blob.arrayBuffer();
 
 		const entry = {
 			id: historyId,
