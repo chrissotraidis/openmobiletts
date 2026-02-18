@@ -7,16 +7,42 @@
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
 	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
-	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown } from 'lucide-svelte';
+	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2 } from 'lucide-svelte';
 
 	let isIOS = $state(false);
 	let activeTab = $state('generate');
+	let exportingLogs = $state(false);
 
 	onMount(() => {
 		if (browser) {
 			isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 		}
 	});
+
+	async function exportLogs() {
+		exportingLogs = true;
+		try {
+			const response = await fetch('/api/logs/export?max_lines=500');
+			if (!response.ok) throw new Error('Failed to fetch logs');
+
+			const data = await response.json();
+			const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `openmobiletts-logs-${new Date().toISOString().slice(0, 10)}.json`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		} catch (err) {
+			console.error('Failed to export logs:', err);
+			alert('Failed to export logs: ' + err.message);
+		} finally {
+			exportingLogs = false;
+		}
+	}
 
 	// Speed slider mapping: 1.0x at center (50%)
 	// Position 0-50: 0.5x to 1.0x, Position 50-100: 1.0x to 2.0x
@@ -59,7 +85,7 @@
 				class="flex items-center gap-3 w-full px-3 py-2 rounded-lg transition-all duration-200 {activeTab === 'generate' ? 'bg-blue-600/10 text-blue-400 font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}"
 			>
 				<Plus size={18} />
-				<span class="text-sm">New Speech</span>
+				<span class="text-sm">New Audio</span>
 			</button>
 			<button
 				onclick={() => { activeTab = 'history'; }}
@@ -250,6 +276,30 @@
 								<span class="text-slate-200">Apache 2.0</span>
 							</div>
 						</div>
+					</div>
+
+					<!-- Export Logs -->
+					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-4">
+						<div class="flex items-center gap-2">
+							<FileDown size={18} class="text-blue-400" />
+							<h3 class="text-lg font-semibold">Export Logs</h3>
+						</div>
+						<p class="text-sm text-slate-400">
+							Download server logs for bug reports. Includes text processing details, errors, and timing information.
+						</p>
+						<button
+							onclick={exportLogs}
+							disabled={exportingLogs}
+							class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 rounded-xl text-sm font-medium transition-colors"
+						>
+							{#if exportingLogs}
+								<Loader2 size={16} class="animate-spin" />
+								Exporting...
+							{:else}
+								<FileDown size={16} />
+								Export Logs (JSON)
+							{/if}
+						</button>
 					</div>
 
 					{#if isIOS}
