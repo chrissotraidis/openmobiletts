@@ -97,6 +97,12 @@ models/
 logs/
 *.log
 
+# Android / Capacitor build artifacts
+.gradle/
+*.apk
+*.aab
+local.properties
+
 # OS
 .DS_Store
 Thumbs.db

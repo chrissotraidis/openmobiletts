@@ -38,6 +38,32 @@ That's it. `run.py` will:
 4. Click "Generate"
 5. Audio streams as it generates — listen while it processes
 
+## Alternative: Android
+
+Run the same app on your Android phone. The server stays on your computer; the phone connects over WiFi.
+
+### Prerequisites
+- Android Studio (latest stable)
+- Android device or emulator (API 22+)
+- Both devices on the same WiFi network
+
+### Setup
+```bash
+# 1. Start the server on your computer
+python run.py
+
+# 2. Build the Android project
+cd client
+npm run build:android
+
+# 3. Open client/android/ in Android Studio → Run on your device
+
+# 4. In the Android app: Settings → Server Connection
+#    Enter http://<your-computer-ip>:8000 → Test Connection
+```
+
+See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for full details.
+
 ## Alternative: Docker
 
 If you prefer not to install Python/Node locally:

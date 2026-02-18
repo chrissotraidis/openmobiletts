@@ -9,6 +9,7 @@ const defaults = {
 	defaultVoice: 'af_heart',
 	defaultSpeed: 1.0,
 	autoPlay: true,
+	serverUrl: '',
 };
 
 function loadSettings() {
@@ -36,8 +37,11 @@ function createSettingsStore() {
 			});
 		},
 		reset() {
-			localStorage.removeItem(STORAGE_KEY);
-			set({ ...defaults });
+			storeUpdate((s) => {
+				const next = { ...defaults, serverUrl: s.serverUrl };
+				localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+				return next;
+			});
 		},
 	};
 }

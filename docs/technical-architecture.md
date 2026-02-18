@@ -115,7 +115,7 @@ All formats go through Markdown-to-plain-text conversion, then the standard text
 ### After (v0.2 — monolithic)
 - Single process: FastAPI serves everything on port 8000
 - No authentication (local-only app)
-- No CORS (same origin)
+- CORS enabled (required for Android WebView cross-origin requests)
 - One `python run.py` command
 
 See [MIGRATION.md](MIGRATION.md) for the full migration rationale.
@@ -125,10 +125,14 @@ See [MIGRATION.md](MIGRATION.md) for the full migration rationale.
 This is a personal, local tool:
 - Running on `localhost` — already behind the network boundary
 - No multi-user features needed
-- Removes entire categories of bugs (token expiry, CORS, secret management)
+- Removes entire categories of bugs (token expiry, secret management)
 - Simpler deployment and maintenance
 
 If exposed on a network, access control should happen at the network/proxy level (firewall, VPN, reverse proxy auth).
+
+### Why CORS?
+
+The Android app (via Capacitor) loads the SvelteKit UI in a WebView. The WebView's origin differs from the server's origin, so cross-origin requests would be blocked without CORS. Since this is a local-only app with no auth, wildcard CORS (`allow_origins=["*"]`) is appropriate.
 
 ## Performance Characteristics
 
@@ -166,3 +170,41 @@ The Dockerfile is a multi-stage build:
 ```
 
 Vite proxies `/api/*` requests to the Python server.
+
+## Android Support (Capacitor)
+
+The app runs on Android via **Capacitor** — the same SvelteKit build wrapped in a native Android WebView. No separate codebase.
+
+```
+┌──────────────────────┐         ┌──────────────────────┐
+│  Android Phone       │  WiFi   │  Your Computer       │
+│                      │         │                      │
+│  Capacitor WebView   │◄───────►│  python run.py       │
+│  (SvelteKit SPA)     │  HTTP   │  (FastAPI + Kokoro)  │
+│                      │         │  port 8000           │
+└──────────────────────┘         └──────────────────────┘
+```
+
+### Why Capacitor?
+
+- **One codebase**: Change the web app, rebuild, same changes on Android
+- **WebView-native**: Uses the device's built-in Chrome engine
+- **No React Native / Flutter**: No second UI framework to maintain
+- **Industry standard**: Used by Ionic, widely adopted
+
+### Key Configuration
+
+- **Configurable API base URL**: `api.js` reads `serverUrl` from localStorage. Empty = relative URLs (web). Set = absolute URLs (Android connecting to server over WiFi)
+- **CORS middleware**: Server allows `*` origins so the WebView can make cross-origin requests
+- **Mixed content**: `allowMixedContent: true` in Capacitor config — HTTPS-origin WebView making HTTP API calls to the local server
+- **Cleartext traffic**: `usesCleartextTraffic="true"` in AndroidManifest — allows HTTP connections
+
+### Build Workflow
+
+```bash
+cd client
+npm run build:android    # vite build + cap sync android
+# Open client/android/ in Android Studio → Run
+```
+
+See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for the full setup guide.

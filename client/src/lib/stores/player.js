@@ -3,6 +3,7 @@
  */
 import { writable, derived, get } from 'svelte/store';
 import { cacheAudio, getCachedAudio } from '$lib/services/audioCache';
+import { apiUrl } from '$lib/services/api';
 
 // Playback states
 export const PlayState = {
@@ -103,7 +104,7 @@ function createPlayerStore() {
 			try {
 				// Use POST with JSON body to handle arbitrarily long text
 				// (GET query params have ~2KB-8KB length limits)
-				const response = await fetch('/api/tts/stream', {
+				const response = await fetch(apiUrl('/api/tts/stream'), {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({

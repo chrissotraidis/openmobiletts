@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
@@ -23,7 +24,15 @@ logger = get_logger(__name__)
 app = FastAPI(
     title="Open Mobile TTS",
     description="Private text-to-speech app — single process, no auth",
-    version="0.2.0",
+    version="1.0.0",
+)
+
+# CORS — allow all origins for Android/Capacitor WebView access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize services
@@ -260,7 +269,7 @@ async def stream_document(
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "0.2.0"}
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 # Logs export endpoint (for mobile bug reports)
@@ -299,6 +308,6 @@ else:
     async def root():
         return {
             "name": "Open Mobile TTS",
-            "version": "0.2.0",
+            "version": "1.0.0",
             "status": "Client not built. Run: cd client && npm run build",
         }

@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-02-18 — v1.0.0: Android Support via Capacitor
+
+Added Android support by wrapping the existing SvelteKit web app in a native Android shell using Capacitor. Bumped version from 0.2.0 to 1.0.0.
+
+**Added:**
+- Capacitor integration (`@capacitor/core`, `@capacitor/cli`, `@capacitor/android`)
+- `client/android/` project — open in Android Studio to build and run
+- `client/capacitor.config.ts` — Capacitor configuration
+- `npm run build:android` script — builds web assets and syncs to Android project
+- Configurable server URL in Settings (for Android to connect to server over WiFi)
+- Test Connection button with 5-second timeout and status feedback
+- CORS middleware on FastAPI (`allow_origins=["*"]`) for cross-origin WebView requests
+- `apiUrl()` helper in `api.js` — all fetch calls route through configurable base URL
+- `serverUrl` setting in localStorage (preserved across settings reset)
+
+**Changed:**
+- All 6 fetch call sites now use `apiUrl()` instead of relative URLs
+- Settings reset preserves server URL to avoid breaking Android connections
+- `api.js` reads server URL directly from localStorage (avoids circular store dependency)
+
+**Docs:**
+- New: `ANDROID_APP_GUIDE.md` — full Android setup and usage guide
+- Updated all existing docs to reflect CORS, Android support, and configurable URLs
+
+---
+
 ## 2026-02-17 — Documentation Overhaul
 
 Updated all documentation to reflect the monolithic architecture (v0.2). Removed outdated references to JWT authentication, CORS, separate client/server processes, port 5173, default credentials, and two-terminal startup. Files rewritten: QUICK_REFERENCE.md, SETUP_GUIDE.md, HOW_IT_WORKS.md, implementation-status.md, technical-architecture.md, testing-summary.md, SECURITY_CHECKLIST.md, docs/README.md, DOCUMENT_PURPOSES.md.
@@ -301,23 +327,21 @@ Added history component below audio player:
 ## Commands to Test
 
 ### Test Streaming Playback
-1. Open http://localhost:5173
-2. Login (admin / testpassword123)
-3. Enter text: "This is a test of the streaming audio playback system."
-4. Click "Generate Speech"
-5. Audio should play automatically
+1. Open http://localhost:8000
+2. Enter text: "This is a test of the streaming audio playback system."
+3. Click "Generate"
+4. Audio should play automatically
 
 ### Test Caching
 1. Generate 2-3 different audio files
-2. Scroll to "History" section
-3. Click "Play" on a cached item
+2. Go to the "History" tab
+3. Click play on a cached item
 4. Refresh page (Ctrl+R / Cmd+R)
 5. Verify history still shows items
 
 ### Test Model Setup
 ```bash
 cd server
-source venv/bin/activate
 python setup_models.py
 ```
 

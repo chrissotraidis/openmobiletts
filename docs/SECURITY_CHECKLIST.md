@@ -1,10 +1,18 @@
 # Security Checklist
 
-Open Mobile TTS has **no authentication** — it is designed as a local-only app. Security is handled at the network level, not the application level.
+Open Mobile TTS has **no authentication** — it is designed as a local-only app. Security is handled at the network level, not the application level. CORS is enabled (`allow_origins=["*"]`) to support the Android app connecting over WiFi.
 
 ## For Local Use (Default)
 
 No action needed. The app runs on `localhost:8000` and is only accessible from your machine.
+
+## For Android Use
+
+The server binds to `0.0.0.0:8000` so Android devices on the same WiFi network can connect. This means any device on your local network can access the server. If this is a concern:
+
+- Use a trusted, private WiFi network
+- Consider firewall rules to restrict access to your phone's IP only
+- The CORS wildcard is intentional — the Android WebView needs cross-origin access
 
 ## For Network/VPS Deployment
 

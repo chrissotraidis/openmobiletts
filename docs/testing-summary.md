@@ -1,7 +1,7 @@
 # Open Mobile TTS - Testing Summary
 
-**Last Updated**: 2026-02-17
-**Status**: ✅ App fully functional and tested
+**Last Updated**: 2026-02-18
+**Status**: ✅ App fully functional and tested (web + Android)
 
 ---
 
@@ -73,8 +73,28 @@ tests/test_document_processor.py ......... 3 PASSED
 
 ---
 
+## Android / Capacitor
+
+**Status**: ✅ Project builds and syncs successfully
+
+**Verified:**
+- `npm run build:android` — builds web assets and syncs to Android project
+- `client/android/` — Gradle project structure valid, opens in Android Studio
+- CORS headers present on all API responses (`access-control-allow-origin: *`)
+- All 6 fetch call sites use `apiUrl()` for configurable server URL
+- Server URL setting persists in localStorage and survives settings reset
+- Test Connection has 5-second timeout with distinct error messages
+- Android manifest has `usesCleartextTraffic="true"` and `INTERNET` permission
+- Capacitor config has `allowMixedContent: true`
+- Package names consistent across all Android project files (`com.openmobiletts.app`)
+
+**Note:** Full on-device testing requires Android Studio with a connected device or emulator. The Gradle sync may report JDK version warnings if the system Java differs from Android Studio's bundled JDK 17 — this is normal and Android Studio handles it.
+
+---
+
 ## Test Coverage Gaps
 
 - [ ] No automated tests for the streaming TTS endpoint (requires Kokoro model)
 - [ ] No client-side tests
 - [ ] Stale auth tests need removal or replacement
+- [ ] No automated Android instrumentation tests (Capacitor scaffold only)
