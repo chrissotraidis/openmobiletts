@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .config import settings
 from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
-from .tts_engine import TTSEngine
+from .tts_engine import create_tts_engine
 from .logging_config import setup_logging, get_logger, preview_text, export_logs_json
 
 # Setup logging
@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 app = FastAPI(
     title="Open Mobile TTS",
     description="Private text-to-speech app — single process, no auth",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 # CORS — allow all origins for Android/Capacitor WebView access
@@ -36,7 +36,7 @@ app.add_middleware(
 )
 
 # Initialize services
-tts_engine = TTSEngine()
+tts_engine = create_tts_engine()
 text_preprocessor = TextPreprocessor()
 document_processor = DocumentProcessor()
 

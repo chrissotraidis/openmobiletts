@@ -5,6 +5,7 @@ python-multipart>=0.0.6
 
 # TTS and audio processing
 kokoro>=0.9.4
+sherpa-onnx>=1.10.0
 soundfile>=0.12.1
 pydub>=0.25.1
 num2words>=0.5.13

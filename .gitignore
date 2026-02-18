@@ -103,6 +103,14 @@ logs/
 *.aab
 local.properties
 
+# Android native build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/libs/*.aar
+android/app/src/main/jniLibs/
+
 # OS
 .DS_Store
 Thumbs.db
