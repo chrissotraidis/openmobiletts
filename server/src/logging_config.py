@@ -174,7 +174,7 @@ def export_logs_json(max_lines: int = 1000) -> dict:
 
     return {
         'exported_at': datetime.now().isoformat(),
-        'app_version': '0.2.0',
+        'app_version': '1.0.0',
         'log_level': LOG_LEVEL,
         'entry_count': len(entries),
         'entries': entries,

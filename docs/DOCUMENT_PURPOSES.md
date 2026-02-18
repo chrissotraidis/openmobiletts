@@ -130,9 +130,52 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Audience**: Anyone deploying beyond localhost
 **Contents**:
 - Network security for VPS deployment
+- Android/WiFi security considerations
 - Git hygiene (what not to commit)
 **Unique Focus**: Security only
 **Overlap Prevention**: No setup instructions
+
+### docs/ROADMAP.md
+**Purpose**: Master version plan — v1 vs v2 architecture, what changes, implementation phases
+**Audience**: Everyone (planning reference before starting v2)
+**Contents**:
+- v1 (current): Capacitor + server architecture
+- v2 (planned): Native Sherpa-ONNX + desktop kept
+- What changes, what stays, what gets added/removed
+- Implementation phases, tech stack, expected performance
+**Unique Focus**: Single source of truth for version strategy
+**Overlap Prevention**: References IMPLEMENTATION_PLAN.md for code-level details, OFFLINE_TTS_FEASIBILITY.md for research
+
+### docs/ANDROID_APP_GUIDE.md
+**Purpose**: Complete guide for running the app on Android
+**Audience**: Users who want to use the app on their Android phone
+**Contents**:
+- How Capacitor wraps the web app
+- Android Studio setup and build
+- Server connection configuration
+- Troubleshooting
+**Unique Focus**: Android-specific setup and usage
+**Overlap Prevention**: No general architecture or server setup
+
+### docs/IMPLEMENTATION_PLAN.md
+**Purpose**: Roadmap for a future native Android app with on-device TTS
+**Audience**: Future contributors
+**Contents**:
+- Sherpa-ONNX integration plan
+- Native Kotlin architecture
+- Model optimization strategy
+**Unique Focus**: Aspirational future direction
+**Overlap Prevention**: Not about the current Capacitor implementation
+
+### docs/OFFLINE_TTS_FEASIBILITY.md
+**Purpose**: Research into running Kokoro TTS directly on a mobile device
+**Audience**: Future contributors
+**Contents**:
+- Model size and memory analysis
+- INT8 quantization feasibility
+- Device performance expectations
+**Unique Focus**: Technical feasibility research
+**Overlap Prevention**: No implementation details, just analysis
 
 ## Rules to Prevent Overlap
 
@@ -157,3 +200,5 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 | Performance change | LIMITS_AND_CONSTRAINTS.md |
 | Test results change | testing-summary.md |
 | Project description | README.md |
+| Android changes | ANDROID_APP_GUIDE.md |
+| Security changes | SECURITY_CHECKLIST.md |

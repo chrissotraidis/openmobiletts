@@ -65,6 +65,14 @@ uvicorn src.main:app --reload --port 8000
 cd client && npm install && npm run dev
 ```
 
+### Build for Android
+```bash
+cd client
+npm run build:android    # Builds web assets + syncs to Android project
+# Open client/android/ in Android Studio → Run on device
+# In app: Settings → Server Connection → enter http://<your-ip>:8000
+```
+
 ### Check Model
 ```bash
 cd server
@@ -103,12 +111,14 @@ Key settings:
 openmobiletts/
 ├── run.py                Single-command launcher
 ├── server/               FastAPI + Kokoro TTS
-│   ├── src/main.py       API endpoints + static file serving
+│   ├── src/main.py       API endpoints + CORS + static file serving
 │   ├── src/tts_engine.py Kokoro wrapper
 │   └── tests/            Automated tests
 ├── client/               SvelteKit UI
 │   ├── src/routes/       Pages (single root page)
 │   ├── src/lib/          Components, stores, services
+│   ├── capacitor.config.ts  Capacitor config (Android)
+│   ├── android/          Android project (for Android Studio)
 │   └── static/           PWA assets
 └── docs/                 Documentation
 ```
@@ -152,3 +162,4 @@ python run.py
 | Technical architecture? | [technical-architecture.md](technical-architecture.md) |
 | What's implemented? | [implementation-status.md](implementation-status.md) |
 | How are tests doing? | [testing-summary.md](testing-summary.md) |
+| Run on Android? | [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) |

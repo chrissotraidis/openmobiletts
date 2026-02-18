@@ -1,16 +1,50 @@
 /**
  * API service — fetch wrapper for the local TTS server.
  * No authentication needed (single-user local app).
+ *
+ * On the web (same-origin), base URL is empty so all fetches are relative.
+ * On Android (Capacitor), the user sets a server URL in Settings, which is
+ * read from localStorage and prepended to all API paths.
  */
 
-const BASE = '';  // Same origin — served by the same process
+const SETTINGS_KEY = 'openmobiletts_settings';
+
+/**
+ * Get the base URL for API requests.
+ * Reads serverUrl from localStorage (same key used by settings store).
+ * Returns '' for same-origin web mode, or 'http://192.168.x.x:8000' for Android.
+ */
+function getBaseUrl() {
+	try {
+		const stored = localStorage.getItem(SETTINGS_KEY);
+		if (stored) {
+			const settings = JSON.parse(stored);
+			if (settings.serverUrl) {
+				// Strip trailing slash
+				return settings.serverUrl.replace(/\/+$/, '');
+			}
+		}
+	} catch {
+		// ignore parse errors
+	}
+	return '';
+}
+
+/**
+ * Build a full API URL from a path.
+ * @param {string} path - API path (e.g., '/api/tts/stream')
+ * @returns {string} Full URL
+ */
+export function apiUrl(path) {
+	return `${getBaseUrl()}${path}`;
+}
 
 /**
  * Fetch available voices from the server.
  * @returns {Promise<Array<{name: string, language: string}>>}
  */
 export async function fetchVoices() {
-	const res = await fetch(`${BASE}/api/voices`);
+	const res = await fetch(apiUrl('/api/voices'));
 	if (!res.ok) throw new Error('Failed to fetch voices');
 	return res.json();
 }
@@ -24,7 +58,7 @@ export async function uploadDocument(file) {
 	const formData = new FormData();
 	formData.append('file', file);
 
-	const res = await fetch(`${BASE}/api/documents/upload`, {
+	const res = await fetch(apiUrl('/api/documents/upload'), {
 		method: 'POST',
 		body: formData,
 	});
@@ -42,7 +76,7 @@ export async function uploadDocument(file) {
  * @returns {Promise<{status: string, version: string}>}
  */
 export async function healthCheck() {
-	const res = await fetch(`${BASE}/api/health`);
+	const res = await fetch(apiUrl('/api/health'));
 	if (!res.ok) throw new Error('Server unhealthy');
 	return res.json();
 }

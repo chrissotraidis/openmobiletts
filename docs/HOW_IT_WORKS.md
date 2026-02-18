@@ -34,7 +34,7 @@ Open Mobile TTS is a **single-process application**. `python run.py` builds the 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**No authentication.** No CORS. No separate processes. One command, one port.
+**No authentication.** No separate processes. One command, one port. CORS enabled for Android support.
 
 ## Is the Model Running Locally?
 
@@ -154,7 +154,7 @@ TIMING:{"text":"of the system","start":2.5,"end":3.8}\n
 
 - **No database**: Server is stateless
 - **Uploaded files**: Deleted immediately after text extraction
-- **No logging**: Text content is never written to disk
+- **Logging**: Server logs requests and errors to an in-memory ring buffer (last 500 entries), exportable via the UI for debugging. No persistent log files on disk.
 
 ### Client Side (All Local)
 
@@ -166,6 +166,20 @@ TIMING:{"text":"of the system","start":2.5,"end":3.8}\n
 
 The app has no login, no passwords, no tokens. It is designed as a **local-only tool** — anyone who can reach `localhost:8000` can use it. If you expose it on a network, access is controlled at the network level, not the application level.
 
+## Android Support
+
+The app also runs on Android via **Capacitor**. The same SvelteKit web app is wrapped in a native Android WebView shell that connects to your Python server over WiFi.
+
+```
+┌──────────────────────┐         ┌──────────────────────┐
+│  Android Phone       │  WiFi   │  Your Computer       │
+│  Capacitor WebView   │◄───────►│  python run.py       │
+│  (SvelteKit SPA)     │  HTTP   │  (FastAPI + Kokoro)  │
+└──────────────────────┘         └──────────────────────┘
+```
+
+In the Android app, go to **Settings > Server Connection** and enter your computer's IP address (e.g., `http://192.168.1.100:8000`). See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for full details.
+
 ## File Structure
 
 ```
@@ -175,7 +189,7 @@ openmobiletts/
 ├── docker-compose.yml       # Docker convenience wrapper
 ├── server/
 │   ├── src/
-│   │   ├── main.py              # FastAPI app + API endpoints + static serving
+│   │   ├── main.py              # FastAPI app + API endpoints + CORS + static serving
 │   │   ├── tts_engine.py        # Kokoro TTS wrapper
 │   │   ├── text_preprocessor.py # Text normalization & chunking
 │   │   ├── audio_encoder.py     # MP3 encoding (pydub + ffmpeg)
@@ -189,7 +203,9 @@ openmobiletts/
 │   │   ├── routes/+page.svelte      # Main TTS interface
 │   │   ├── lib/components/          # UI components
 │   │   ├── lib/stores/              # State management
-│   │   └── lib/services/            # API client
+│   │   └── lib/services/            # API client (configurable base URL)
+│   ├── capacitor.config.ts          # Capacitor config (Android)
+│   ├── android/                     # Android project (Capacitor-generated)
 │   └── static/                      # PWA manifest
 └── docs/                            # Documentation
 ```
@@ -248,3 +264,4 @@ See also:
 - [Technical Architecture](technical-architecture.md) - Detailed design decisions
 - [Implementation Status](implementation-status.md) - What's built vs. planned
 - [Limits & Constraints](LIMITS_AND_CONSTRAINTS.md) - Full performance details
+- [Android App Guide](ANDROID_APP_GUIDE.md) - Running on Android via Capacitor

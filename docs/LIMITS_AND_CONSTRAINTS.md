@@ -164,10 +164,17 @@ Audio cache:       Grows with usage
 
 ### 7. Network Limits
 
-**Local communication (no actual network):**
+**Web (localhost — no actual network):**
 - Client → Server: localhost, no bandwidth limit
 - Typical streaming rate: 50-500 KB/s
 - No timeout (can stream for hours if needed)
+
+**Android (WiFi):**
+- Phone → Computer: over local WiFi network
+- Latency: typically < 5ms on local network
+- Bandwidth: limited by WiFi speed (typically 50+ Mbps, far exceeding TTS streaming needs)
+- Both devices must be on the same WiFi network
+- Server binds to `0.0.0.0:8000` for network access
 
 **Initial model download:**
 - Size: ~320MB

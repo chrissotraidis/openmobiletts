@@ -3,6 +3,7 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { getCachedAudio, cacheAudio } from '$lib/services/audioCache';
+	import { apiUrl } from '$lib/services/api';
 	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
@@ -75,7 +76,7 @@
 
 			// If not cached, regenerate the audio
 			if (!blob) {
-				const response = await fetch('/api/tts/stream', {
+				const response = await fetch(apiUrl('/api/tts/stream'), {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({

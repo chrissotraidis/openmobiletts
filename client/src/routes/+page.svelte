@@ -7,11 +7,15 @@
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
 	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
-	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2 } from 'lucide-svelte';
+	import { apiUrl, healthCheck } from '$lib/services/api';
+	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2, Wifi, CheckCircle, XCircle } from 'lucide-svelte';
 
 	let isIOS = $state(false);
 	let activeTab = $state('generate');
 	let exportingLogs = $state(false);
+	let testingConnection = $state(false);
+	let connectionStatus = $state(null); // null | 'success' | 'error'
+	let connectionMessage = $state('');
 
 	onMount(() => {
 		if (browser) {
@@ -22,7 +26,7 @@
 	async function exportLogs() {
 		exportingLogs = true;
 		try {
-			const response = await fetch('/api/logs/export?max_lines=500');
+			const response = await fetch(apiUrl('/api/logs/export?max_lines=500'));
 			if (!response.ok) throw new Error('Failed to fetch logs');
 
 			const data = await response.json();
@@ -41,6 +45,27 @@
 			alert('Failed to export logs: ' + err.message);
 		} finally {
 			exportingLogs = false;
+		}
+	}
+
+	async function testConnection() {
+		testingConnection = true;
+		connectionStatus = null;
+		connectionMessage = '';
+		try {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 5000);
+			const res = await fetch(apiUrl('/api/health'), { signal: controller.signal });
+			clearTimeout(timeout);
+			if (!res.ok) throw new Error('Server unhealthy');
+			const data = await res.json();
+			connectionStatus = 'success';
+			connectionMessage = `Connected (v${data.version})`;
+		} catch (err) {
+			connectionStatus = 'error';
+			connectionMessage = err.name === 'AbortError' ? 'Connection timed out' : 'Could not reach server';
+		} finally {
+			testingConnection = false;
 		}
 	}
 
@@ -242,6 +267,61 @@
 							<RotateCcw size={12} />
 							Reset to defaults
 						</button>
+					</div>
+
+					<!-- Server Connection -->
+					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-5">
+						<div class="flex items-center gap-2">
+							<Wifi size={18} class="text-blue-400" />
+							<h3 class="text-lg font-semibold">Server Connection</h3>
+						</div>
+
+						<div class="space-y-2">
+							<div class="flex items-center gap-2 px-1">
+								<span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Server URL</span>
+							</div>
+							<input
+								type="text"
+								value={$settingsStore.serverUrl}
+								onchange={(e) => {
+									settingsStore.update('serverUrl', e.target.value.trim());
+									connectionStatus = null;
+								}}
+								placeholder="Leave empty for same-origin (default)"
+								class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-sm placeholder:text-slate-600"
+							/>
+							<p class="text-[10px] text-slate-600 px-1">
+								For Android: enter your computer's IP, e.g. http://192.168.1.100:8000
+							</p>
+						</div>
+
+						<div class="flex items-center gap-3">
+							<button
+								onclick={testConnection}
+								disabled={testingConnection}
+								class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 rounded-xl text-sm font-medium transition-colors"
+							>
+								{#if testingConnection}
+									<Loader2 size={16} class="animate-spin" />
+									Testing...
+								{:else}
+									<Wifi size={16} />
+									Test Connection
+								{/if}
+							</button>
+
+							{#if connectionStatus === 'success'}
+								<div class="flex items-center gap-1.5 text-sm text-emerald-400">
+									<CheckCircle size={16} />
+									{connectionMessage}
+								</div>
+							{:else if connectionStatus === 'error'}
+								<div class="flex items-center gap-1.5 text-sm text-red-400">
+									<XCircle size={16} />
+									{connectionMessage}
+								</div>
+							{/if}
+						</div>
 					</div>
 
 					<!-- About -->

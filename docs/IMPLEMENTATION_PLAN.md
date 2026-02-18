@@ -1,8 +1,10 @@
-# Implementation Plan: On-Device Android TTS App
+# Implementation Plan: On-Device Android TTS App (v2)
 
 ## Overview
 
-Replace the current client-server architecture (SvelteKit PWA + FastAPI + Docker) with a single native Android app that runs Kokoro TTS entirely on-device using Sherpa-ONNX. No server, no network, no authentication.
+Build a standalone native Android app that runs Kokoro TTS entirely on-device using Sherpa-ONNX. No server, no network, no authentication. This is the **v2** goal.
+
+The desktop web app (SvelteKit + FastAPI) remains available for computer users. v2 adds a native Android app alongside it — it does not replace the desktop version.
 
 **Tech stack:** Kotlin, Jetpack Compose, Sherpa-ONNX (Kokoro INT8), AudioTrack, Room DB
 
@@ -452,19 +454,18 @@ The complete flow when the user taps "Generate":
 
 ---
 
-## Phase 9: What Gets Deleted
+## Phase 9: Cleanup & Coexistence
 
-Once the Android app is working, the following can be removed or archived:
+The desktop web app (server/ + client/) is **kept** for computer users. The native Android app lives alongside it.
 
 | Directory/File | Action |
 |---|---|
-| `server/` (entire directory) | **Delete** — FastAPI server no longer needed |
-| `client/` (entire directory) | **Delete** — SvelteKit PWA replaced by native app |
-| `docs/HOW_IT_WORKS.md` | **Rewrite** for new architecture |
-| `docs/technical-architecture.md` | **Rewrite** |
-| `docs/SETUP_GUIDE.md` | **Rewrite** — now just "install APK" |
-| `docs/SECURITY_CHECKLIST.md` | **Simplify** — no server auth needed |
-| `README.md` | **Rewrite** |
+| `server/` | **Keep** — desktop users still use the web app |
+| `client/` | **Keep** — desktop web UI + Capacitor fallback |
+| `client/android/` (Capacitor) | **Remove** — replaced by native `android/` |
+| `android/` (new, top-level) | **New** — native Kotlin app |
+| `docs/` | **Update** — add native Android docs, update architecture |
+| `README.md` | **Update** — document both desktop and Android paths |
 
 ---
 
