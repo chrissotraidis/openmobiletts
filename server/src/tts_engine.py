@@ -1,21 +1,22 @@
-"""Kokoro TTS engine wrapper with streaming support."""
+"""Kokoro TTS backend, engine manager, and factory."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import AsyncGenerator, Dict, List, Tuple
 
 import numpy as np
-from kokoro import KPipeline
 
 from .audio_encoder import StreamingAudioEncoder
 from .config import settings
+from .tts_backend import TTSBackend
 
 # Thread pool for parallel encoding
 _encoder_pool = ThreadPoolExecutor(max_workers=2)
 
 
-class TTSEngine:
-    """Wrapper for Kokoro TTS with streaming support."""
+class KokoroBackend(TTSBackend):
+    """Kokoro PyTorch TTS backend with streaming support."""
 
     def __init__(
         self,
@@ -23,14 +24,8 @@ class TTSEngine:
         default_voice: str = None,
         default_speed: float = None,
     ):
-        """
-        Initialize the TTS engine.
+        from kokoro import KPipeline
 
-        Args:
-            lang_code: Language code ('a' for American English)
-            default_voice: Default voice to use
-            default_speed: Default speech speed (1.0 = normal)
-        """
         self.lang_code = lang_code or settings.KOKORO_LANG_CODE
         self.default_voice = default_voice or settings.DEFAULT_VOICE
         self.default_speed = default_speed or settings.DEFAULT_SPEED
@@ -45,32 +40,40 @@ class TTSEngine:
         self._voices = self._get_available_voices()
 
     def _get_available_voices(self) -> List[Dict[str, str]]:
-        """
-        Get list of available voices for the current language.
-
-        Returns:
-            List of voice dictionaries with name and language info
-        """
-        # Kokoro voices by language code
+        """Get list of available voices with rich metadata."""
         voices_by_lang = {
-            'a': [  # American English
+            'a': [
                 'af_heart', 'af_nova', 'af_sky', 'af_bella', 'af_sarah',
                 'am_adam', 'am_michael', 'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis'
             ],
-            'b': [  # British English
+            'b': [
                 'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis'
             ],
         }
 
+        lang_map = {
+            'a': ('en-us', 'English (US)'),
+            'b': ('en-gb', 'English (UK)'),
+        }
+
         voice_names = voices_by_lang.get(self.lang_code, [])
-        return [
-            {'name': voice, 'language': self.lang_code}
-            for voice in voice_names
-        ]
+        result = []
+        for v in voice_names:
+            prefix = v[0]
+            gender_char = v[1]
+            lang_code, lang_name = lang_map.get(prefix, ('en-us', 'English (US)'))
+            display = v.split('_', 1)[1].title() if '_' in v else v
+            result.append({
+                'name': v,
+                'language': lang_code,
+                'language_name': lang_name,
+                'gender': 'female' if gender_char == 'f' else 'male',
+                'display_name': display,
+            })
+        return result
 
     @property
     def available_voices(self) -> List[Dict[str, str]]:
-        """Get available voices."""
         return self._voices
 
     async def generate_speech_stream(
@@ -79,56 +82,38 @@ class TTSEngine:
         voice: str = None,
         speed: float = None,
     ) -> AsyncGenerator[Tuple[bytes, Dict], None]:
-        """
-        Generate speech audio as a stream with timing metadata.
-
-        This is the core streaming method that yields MP3 chunks with timing info
-        as they're generated, enabling real-time playback on the client.
+        """Generate speech audio as a stream with timing metadata.
 
         Uses parallel encoding: MP3 encoding runs in a thread pool while
         Kokoro continues generating the next segment.
-
-        Args:
-            text_chunks: List of chunk dicts with 'text' and 'starts_paragraph' keys
-            voice: Voice to use (defaults to default_voice)
-            speed: Speech speed multiplier (defaults to default_speed)
-
-        Yields:
-            Tuple of (MP3 audio bytes, timing metadata dict)
         """
         voice = voice or self.default_voice
         speed = speed or self.default_speed
 
         cumulative_time = 0.0
-        pending_encode = None  # Future for encoding previous segment
-        pending_meta = None    # Metadata for pending encode
+        pending_encode = None
+        pending_meta = None
 
         for chunk_index, chunk_data in enumerate(text_chunks):
-            # Extract text and paragraph info from chunk dict
             text_chunk = chunk_data['text']
             starts_paragraph = chunk_data.get('starts_paragraph', False)
 
-            # Generate audio using Kokoro's generator
             generator = self.pipeline(
                 text_chunk,
                 voice=voice,
                 speed=speed,
             )
 
-            # Track if this is the first segment of this chunk
             is_first_segment = True
 
-            # Process each audio segment from the generator
             for graphemes, phonemes, audio_array in generator:
-                # If there's a pending encode from previous iteration, wait for it
                 if pending_encode is not None:
                     mp3_bytes, duration = await asyncio.wrap_future(pending_encode)
                     pending_meta['end'] = pending_meta['start'] + duration
                     cumulative_time = pending_meta['end']
                     yield mp3_bytes, pending_meta
 
-                # Start encoding current segment in thread pool (non-blocking)
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 pending_encode = loop.run_in_executor(
                     _encoder_pool,
                     self.encoder.encode_chunk,
@@ -137,16 +122,14 @@ class TTSEngine:
                 pending_meta = {
                     'text': graphemes,
                     'start': cumulative_time,
-                    'end': 0,  # Will be filled when encode completes
+                    'end': 0,
                     'chunk_index': chunk_index,
                     'starts_paragraph': starts_paragraph and is_first_segment,
                 }
                 is_first_segment = False
 
-                # Yield control to allow concurrent operations
                 await asyncio.sleep(0)
 
-        # Yield final pending segment
         if pending_encode is not None:
             mp3_bytes, duration = await asyncio.wrap_future(pending_encode)
             pending_meta['end'] = pending_meta['start'] + duration
@@ -158,31 +141,70 @@ class TTSEngine:
         voice: str = None,
         speed: float = None,
     ) -> Tuple[np.ndarray, float]:
-        """
-        Generate speech audio synchronously (non-streaming).
-
-        Use this for complete audio generation when streaming isn't needed.
-
-        Args:
-            text: Text to convert to speech
-            voice: Voice to use
-            speed: Speech speed multiplier
-
-        Returns:
-            Tuple of (audio array, total duration)
-        """
+        """Generate speech audio synchronously (non-streaming)."""
         voice = voice or self.default_voice
         speed = speed or self.default_speed
 
-        # Collect all audio chunks
         audio_chunks = []
         for graphemes, phonemes, audio_array in self.pipeline(text, voice=voice, speed=speed):
             audio_chunks.append(audio_array)
 
-        # Concatenate all chunks
         full_audio = np.concatenate(audio_chunks) if audio_chunks else np.array([])
-
-        # Calculate duration (Kokoro outputs at 24kHz)
         duration = len(full_audio) / 24000
 
         return full_audio, duration
+
+
+# Keep backward-compatible alias
+TTSEngine = KokoroBackend
+
+
+class EngineManager:
+    """Manages TTS backends with lazy loading and runtime switching."""
+
+    def __init__(self):
+        self._engines: Dict[str, TTSBackend] = {}
+        self._active_name: str = settings.TTS_ENGINE
+        self._active: TTSBackend | None = None
+
+    @property
+    def active(self) -> TTSBackend:
+        if self._active is None:
+            self._active = self._load(self._active_name)
+        return self._active
+
+    @property
+    def active_name(self) -> str:
+        return self._active_name
+
+    def _load(self, name: str) -> TTSBackend:
+        if name not in self._engines:
+            if name == "sherpa-onnx":
+                from .sherpa_backend import SherpaOnnxBackend
+                self._engines[name] = SherpaOnnxBackend()
+            else:
+                self._engines[name] = KokoroBackend()
+        return self._engines[name]
+
+    def switch(self, name: str) -> None:
+        self._active = self._load(name)
+        self._active_name = name
+
+    def available_engines(self) -> list:
+        engines = [{"name": "kokoro", "label": "Kokoro (PyTorch)", "available": True}]
+        sherpa_available = Path(settings.SHERPA_MODEL_DIR, "model.onnx").exists()
+        engines.append({
+            "name": "sherpa-onnx",
+            "label": "Sherpa-ONNX (Multi-lang)",
+            "available": sherpa_available,
+        })
+        return engines
+
+
+def create_tts_engine() -> TTSBackend:
+    """Factory function — backward-compatible wrapper.
+
+    Returns the default EngineManager's active engine.
+    """
+    manager = EngineManager()
+    return manager.active

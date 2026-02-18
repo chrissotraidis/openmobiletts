@@ -1,6 +1,7 @@
 <script>
 	import { playerStore, PlayState } from '$lib/stores/player';
-	import { Play, Pause, Square, Volume2, Gauge, AlertTriangle, Download } from 'lucide-svelte';
+	import { playlistStore } from '$lib/stores/playlist';
+	import { Play, Pause, Square, Volume2, Gauge, AlertTriangle, Download, ListMusic, X, GripVertical } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
 	let playerState = $state(PlayState.IDLE);
@@ -12,6 +13,51 @@
 	let errorMessage = $state('');
 	let showSpeedMenu = $state(false);
 	let showStopConfirm = $state(false);
+	let showQueue = $state(false);
+
+	// Playlist state
+	let queueItems = $state([]);
+	let queueCurrentIndex = $state(-1);
+
+	// Drag-to-reorder state
+	let dragIndex = $state(-1);
+	let dragOverIndex = $state(-1);
+	let queueListEl = $state(null);
+
+	function handleDragStart(idx, e) {
+		e.preventDefault();
+		dragIndex = idx;
+		dragOverIndex = idx;
+		const target = e.currentTarget.closest('[data-queue-item]');
+		if (target) target.setPointerCapture(e.pointerId);
+	}
+
+	function handleDragMove(e) {
+		if (dragIndex < 0 || !queueListEl) return;
+		const items = queueListEl.querySelectorAll('[data-queue-item]');
+		const y = e.clientY;
+		let closest = dragIndex;
+		for (let i = 0; i < items.length; i++) {
+			const rect = items[i].getBoundingClientRect();
+			if (y >= rect.top && y <= rect.bottom) {
+				closest = i;
+				break;
+			}
+			// If pointer is above the first item
+			if (i === 0 && y < rect.top) { closest = 0; break; }
+			// If pointer is below the last item
+			if (i === items.length - 1 && y > rect.bottom) { closest = items.length - 1; break; }
+		}
+		dragOverIndex = closest;
+	}
+
+	function handleDragEnd() {
+		if (dragIndex >= 0 && dragOverIndex >= 0 && dragIndex !== dragOverIndex) {
+			playlistStore.move(dragIndex, dragOverIndex);
+		}
+		dragIndex = -1;
+		dragOverIndex = -1;
+	}
 
 	// Progress tracking during generation
 	let genSegments = $state([]);
@@ -46,6 +92,8 @@
 		playerStore.errorMessage.subscribe((e) => (errorMessage = e)),
 		playerStore.segments.subscribe((s) => (genSegments = s)),
 		playerStore.inputText.subscribe((t) => (genInputText = t)),
+		playlistStore.items.subscribe((items) => (queueItems = items)),
+		playlistStore.currentIndex.subscribe((i) => (queueCurrentIndex = i)),
 	];
 	onDestroy(() => {
 		unsubs.forEach((u) => u());
@@ -59,7 +107,7 @@
 		showSpeedMenu = false;
 	}
 
-	const isVisible = $derived(playerState !== PlayState.IDLE);
+	const isVisible = $derived(playerState !== PlayState.IDLE || queueItems.length > 0);
 	const isPlaying = $derived(playerState === PlayState.PLAYING);
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
 	const isError = $derived(playerState === PlayState.ERROR);
@@ -133,7 +181,109 @@
 		document.body.removeChild(a);
 		URL.revokeObjectURL(url);
 	}
+
+	function playQueueItem(index) {
+		const item = queueItems[index];
+		if (!item) return;
+		playlistStore.currentIndex.set(index);
+		playerStore.playFromHistory(item, true);
+	}
+
+	function startQueue() {
+		const entry = playlistStore.start();
+		if (entry) {
+			playerStore.playFromHistory(entry, true);
+		}
+	}
+
+	const hasQueue = $derived(queueItems.length > 0);
 </script>
+
+<!-- Queue Panel (slides up above the player bar) -->
+{#if showQueue && hasQueue}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-29 bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 max-h-[50vh] overflow-y-auto custom-scrollbar"
+		onpointermove={handleDragMove}
+		onpointerup={handleDragEnd}
+		onpointercancel={handleDragEnd}
+	>
+		<div class="px-4 py-3 flex items-center justify-between border-b border-white/5">
+			<div class="flex items-center gap-2">
+				<ListMusic size={14} class="text-blue-400" />
+				<span class="text-xs font-semibold text-slate-400">Queue</span>
+				<span class="text-[10px] text-slate-600">{queueItems.length} track{queueItems.length !== 1 ? 's' : ''}</span>
+			</div>
+			<div class="flex items-center gap-3">
+				{#if queueCurrentIndex < 0}
+					<button
+						onclick={startQueue}
+						class="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors px-2 py-1"
+					>
+						Play All
+					</button>
+				{/if}
+				<button
+					onclick={() => { playlistStore.clear(); showQueue = false; }}
+					class="text-xs text-slate-600 hover:text-red-400 transition-colors px-2 py-1"
+				>
+					Clear
+				</button>
+			</div>
+		</div>
+		<div bind:this={queueListEl}>
+			{#each queueItems as item, idx (item.id)}
+				{@const isDragging = dragIndex === idx}
+				{@const isDropTarget = dragIndex >= 0 && dragOverIndex === idx && dragIndex !== idx}
+				<div
+					data-queue-item={idx}
+					class="flex items-center gap-2 px-2 py-3 transition-colors select-none
+						{idx === queueCurrentIndex ? 'bg-blue-500/10 border-l-2 border-blue-500' : 'border-l-2 border-transparent'}
+						{isDragging ? 'opacity-50 bg-white/5' : ''}
+						{isDropTarget ? 'border-t-2 !border-t-blue-400' : ''}"
+				>
+					<!-- Drag Handle (touch-friendly) -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="w-10 h-10 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 touch-none"
+						onpointerdown={(e) => handleDragStart(idx, e)}
+					>
+						<GripVertical size={16} />
+					</div>
+
+					<!-- Track number / play button -->
+					<button
+						onclick={() => playQueueItem(idx)}
+						class="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg hover:bg-white/10 transition-colors"
+					>
+						{#if idx === queueCurrentIndex && (isPlaying || isGenerating)}
+							<div class="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+						{:else}
+							<span class="text-xs font-mono text-slate-500">{idx + 1}</span>
+						{/if}
+					</button>
+
+					<!-- Track info -->
+					<div class="flex-1 min-w-0 py-1">
+						<p class="text-sm text-slate-300 truncate">{item.preview || item.text?.slice(0, 60)}</p>
+						<span class="text-[11px] text-slate-600">
+							{voiceDisplayNames[item.voice] || item.voice} · {item.speed?.toFixed(1) || '1.0'}x
+						</span>
+					</div>
+
+					<!-- Remove (touch-friendly) -->
+					<button
+						onclick={() => playlistStore.remove(idx)}
+						class="w-10 h-10 flex items-center justify-center shrink-0 text-slate-700 hover:text-red-400 active:text-red-400 transition-colors"
+						title="Remove from queue"
+					>
+						<X size={16} />
+					</button>
+				</div>
+			{/each}
+		</div>
+	</div>
+{/if}
 
 {#if isVisible}
 	<div class="fixed bottom-[72px] md:bottom-0 left-0 md:left-64 right-0 z-30 bg-[#0d1117]/95 backdrop-blur-md border-t border-white/5">
@@ -231,6 +381,20 @@
 					</div>
 				</div>
 
+				<!-- Queue Toggle -->
+				{#if hasQueue}
+					<button
+						onclick={() => showQueue = !showQueue}
+						class="relative p-2 transition-colors {showQueue ? 'text-blue-400' : 'text-slate-500 hover:text-blue-400'}"
+						title="Queue ({queueItems.length})"
+					>
+						<ListMusic size={14} />
+						<span class="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-blue-600 rounded-full text-[8px] font-bold flex items-center justify-center text-white">
+							{queueItems.length}
+						</span>
+					</button>
+				{/if}
+
 				<!-- Download -->
 				<button
 					onclick={downloadCurrentAudio}
@@ -277,7 +441,7 @@
 					Keep Playing
 				</button>
 				<button
-					onclick={() => { playerStore.stop(); showStopConfirm = false; }}
+					onclick={() => { playerStore.stop(); playlistStore.clear(); showStopConfirm = false; showQueue = false; }}
 					class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium transition-colors"
 				>
 					Discard

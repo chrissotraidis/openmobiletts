@@ -10,6 +10,7 @@ const defaults = {
 	defaultSpeed: 1.0,
 	autoPlay: true,
 	serverUrl: '',
+	engine: 'kokoro',
 };
 
 function loadSettings() {

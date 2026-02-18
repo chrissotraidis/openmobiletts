@@ -1,6 +1,8 @@
 """Configuration management for Open Mobile TTS."""
 
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -10,11 +12,21 @@ load_dotenv()
 class Settings:
     """Application settings loaded from environment variables."""
 
-    # TTS Engine
+    # TTS Engine selection: 'kokoro' (PyTorch) or 'sherpa-onnx' (ONNX)
+    TTS_ENGINE: str = os.getenv("TTS_ENGINE", "kokoro")
+
+    # Kokoro PyTorch settings
     KOKORO_LANG_CODE: str = os.getenv("KOKORO_LANG_CODE", "a")  # 'a' for American English
     DEFAULT_VOICE: str = os.getenv("DEFAULT_VOICE", "af_heart")
     DEFAULT_SPEED: float = float(os.getenv("DEFAULT_SPEED", "1.0"))
     MAX_CHUNK_TOKENS: int = int(os.getenv("MAX_CHUNK_TOKENS", "250"))
+
+    # Sherpa-ONNX settings
+    SHERPA_MODEL_DIR: str = os.getenv(
+        "SHERPA_MODEL_DIR",
+        str(Path.home() / ".cache" / "sherpa-onnx-kokoro" / "kokoro-multi-lang-v1_0"),
+    )
+    SHERPA_NUM_THREADS: int = int(os.getenv("SHERPA_NUM_THREADS", "2"))
 
     # Audio Encoding
     MP3_BITRATE: str = os.getenv("MP3_BITRATE", "64k")

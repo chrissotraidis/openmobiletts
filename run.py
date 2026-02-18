@@ -139,6 +139,30 @@ def install_pip_deps():
     print("\n  Python dependencies installed.\n")
 
 
+def check_sherpa_model():
+    """Check if Sherpa-ONNX model is downloaded when that engine is selected."""
+    tts_engine = os.environ.get("TTS_ENGINE", "kokoro")
+    if tts_engine != "sherpa-onnx":
+        return
+
+    model_dir = os.environ.get(
+        "SHERPA_MODEL_DIR",
+        str(Path.home() / ".cache" / "sherpa-onnx-kokoro" / "kokoro-multi-lang-v1_0"),
+    )
+
+    if not Path(model_dir, "model.onnx").exists():
+        print()
+        print("  " + _bold("Sherpa-ONNX model not found."))
+        print(f"  Expected at: {model_dir}")
+        print()
+        print("  Download it with:")
+        print("    python server/setup_sherpa_models.py")
+        print()
+        _fail("Sherpa-ONNX model required when TTS_ENGINE=sherpa-onnx")
+
+    print(f"  Sherpa-ONNX model found at: {model_dir}")
+
+
 def build_client():
     """Build the SvelteKit client if not already built."""
     if CLIENT_BUILD.exists() and (CLIENT_BUILD / "index.html").exists():
@@ -202,13 +226,16 @@ def main():
     # 3. Build client
     build_client()
 
-    # 4. Notify about model download
+    # 4. Check Sherpa model if needed
+    check_sherpa_model()
+
+    # 5. Notify about model download
     print_first_run_notice()
 
-    # 5. Set static dir for the server
+    # 6. Set static dir for the server
     os.environ.setdefault("STATIC_DIR", str(CLIENT_BUILD))
 
-    # 6. Add server to Python path and start
+    # 7. Add server to Python path and start
     sys.path.insert(0, str(SERVER_DIR))
 
     import uvicorn

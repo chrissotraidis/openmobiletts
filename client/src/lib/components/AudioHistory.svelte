@@ -1,10 +1,12 @@
 <script>
 	import { historyStore } from '$lib/stores/history';
 	import { playerStore, PlayState } from '$lib/stores/player';
+	import { playlistStore } from '$lib/stores/playlist';
 	import { settingsStore } from '$lib/stores/settings';
 	import { getCachedAudio, cacheAudio } from '$lib/services/audioCache';
 	import { apiUrl } from '$lib/services/api';
-	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download } from 'lucide-svelte';
+	import TextDisplay from '$lib/components/TextDisplay.svelte';
+	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download, ListPlus, Check, ArrowLeft, BookOpen } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
 	let history = $state([]);
@@ -14,9 +16,14 @@
 	let loadingEntryId = $state(null);
 	let downloadingEntryIds = $state(new Set());
 	let playerState = $state(PlayState.IDLE);
+	let queuedIds = $state(new Set());
+	let viewingEntry = $state(null); // When set, shows reader/detail view
 
 	const unsubs = [
 		historyStore.subscribe((h) => (history = h)),
+		playlistStore.items.subscribe((items) => {
+			queuedIds = new Set(items.map((e) => e.id));
+		}),
 		playerStore.state.subscribe((s) => {
 			playerState = s;
 			// Clear loading state when playback starts or errors
@@ -44,6 +51,17 @@
 	function playEntry(entry) {
 		loadingEntryId = entry.id;
 		// Uses cache if available, otherwise regenerates
+		playerStore.playFromHistory(entry, $settingsStore.autoPlay);
+	}
+
+	function addToQueue(entry) {
+		playlistStore.add(entry);
+	}
+
+	function openReader(entry) {
+		viewingEntry = entry;
+		// Start playback so TextDisplay has segments
+		loadingEntryId = entry.id;
 		playerStore.playFromHistory(entry, $settingsStore.autoPlay);
 	}
 
@@ -240,7 +258,85 @@
 	</div>
 {/if}
 
-{#if history.length === 0}
+{#if viewingEntry}
+	<!-- READER / DETAIL VIEW -->
+	<div class="space-y-4">
+		<!-- Header -->
+		<div class="flex items-center gap-3">
+			<button
+				onclick={() => viewingEntry = null}
+				class="w-9 h-9 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center transition-colors"
+			>
+				<ArrowLeft size={16} class="text-slate-400" />
+			</button>
+			<div class="flex-1 min-w-0">
+				<h3 class="text-sm font-semibold text-slate-300 truncate">{viewingEntry.preview}</h3>
+				<div class="flex items-center gap-3 mt-0.5">
+					<span class="text-[10px] text-slate-500 flex items-center gap-1">
+						<Volume2 size={10} />
+						{voiceDisplayNames[viewingEntry.voice] || viewingEntry.voice}
+					</span>
+					<span class="text-[10px] text-slate-600 font-mono">{viewingEntry.speed?.toFixed(1) || '1.0'}x</span>
+					<span class="text-[10px] text-slate-600">{formatDate(viewingEntry.createdAt)}</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Play / Queue / Download controls -->
+		<div class="flex items-center gap-2">
+			<button
+				onclick={() => { loadingEntryId = viewingEntry.id; playerStore.playFromHistory(viewingEntry, true); }}
+				disabled={loadingEntryId === viewingEntry.id}
+				class="btn btn-primary flex items-center gap-2 text-sm px-4 py-2.5"
+			>
+				{#if loadingEntryId === viewingEntry.id && (playerState === PlayState.GENERATING)}
+					<Loader2 size={14} class="animate-spin" />
+					<span>Generating...</span>
+				{:else}
+					<Play size={14} />
+					<span>Play</span>
+				{/if}
+			</button>
+			<button
+				onclick={() => addToQueue(viewingEntry)}
+				disabled={queuedIds.has(viewingEntry.id)}
+				class="flex items-center gap-2 text-sm px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors disabled:opacity-50"
+			>
+				{#if queuedIds.has(viewingEntry.id)}
+					<Check size={14} class="text-emerald-400" />
+					<span class="text-emerald-400">In Queue</span>
+				{:else}
+					<ListPlus size={14} />
+					<span>Add to Queue</span>
+				{/if}
+			</button>
+			<button
+				onclick={() => downloadEntry(viewingEntry)}
+				disabled={downloadingEntryIds.has(viewingEntry.id)}
+				class="flex items-center gap-2 text-sm px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors disabled:opacity-50"
+			>
+				{#if downloadingEntryIds.has(viewingEntry.id)}
+					<Loader2 size={14} class="animate-spin" />
+				{:else}
+					<Download size={14} />
+				{/if}
+				<span>Download</span>
+			</button>
+		</div>
+
+		<!-- Text Display with synchronized highlighting -->
+		<TextDisplay />
+
+		<!-- Full original text (fallback if TextDisplay has no segments yet) -->
+		<div class="p-5 bg-slate-900/40 border border-white/5 rounded-2xl">
+			<div class="flex items-center gap-2 mb-4">
+				<BookOpen size={16} class="text-blue-400" />
+				<h3 class="text-sm font-semibold text-slate-400">Full Text</h3>
+			</div>
+			<p class="text-[15px] leading-relaxed text-slate-300 whitespace-pre-wrap">{viewingEntry.text}</p>
+		</div>
+	</div>
+{:else if history.length === 0}
 	<div class="flex flex-col items-center justify-center py-20 text-center">
 		<div class="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-4">
 			<Clock size={28} class="text-slate-600" />
@@ -277,8 +373,11 @@
 						{/if}
 					</button>
 
-					<!-- Content -->
-					<div class="flex-1 min-w-0">
+					<!-- Content (clickable to open reader) -->
+					<button
+						onclick={() => openReader(entry)}
+						class="flex-1 min-w-0 text-left"
+					>
 						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed">{entry.preview}</p>
 						<div class="flex items-center gap-3 mt-2">
 							<span class="text-[10px] text-slate-500 flex items-center gap-1">
@@ -291,7 +390,30 @@
 								<span class="text-[10px] text-blue-400">Loading...</span>
 							{/if}
 						</div>
-					</div>
+					</button>
+
+					<!-- Reader mode button -->
+					<button
+						onclick={() => openReader(entry)}
+						class="p-1.5 text-slate-700 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+						title="Open reader"
+					>
+						<BookOpen size={14} />
+					</button>
+
+					<!-- Add to Queue -->
+					<button
+						onclick={() => addToQueue(entry)}
+						disabled={queuedIds.has(entry.id)}
+						class="p-1.5 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-100 {queuedIds.has(entry.id) ? 'text-emerald-400' : 'text-slate-700 hover:text-emerald-400'}"
+						title={queuedIds.has(entry.id) ? 'In queue' : 'Add to queue'}
+					>
+						{#if queuedIds.has(entry.id)}
+							<Check size={14} />
+						{:else}
+							<ListPlus size={14} />
+						{/if}
+					</button>
 
 					<!-- Download -->
 					<button
