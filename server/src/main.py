@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .config import settings
 from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
-from .tts_engine import create_tts_engine
+from .tts_engine import EngineManager
 from .logging_config import setup_logging, get_logger, preview_text, export_logs_json
 
 # Setup logging
@@ -36,7 +36,7 @@ app.add_middleware(
 )
 
 # Initialize services
-tts_engine = create_tts_engine()
+engine_manager = EngineManager()
 text_preprocessor = TextPreprocessor()
 document_processor = DocumentProcessor()
 
@@ -48,6 +48,9 @@ Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 class VoiceInfo(BaseModel):
     name: str
     language: str
+    language_name: str
+    gender: str
+    display_name: str
 
 
 class DocumentUploadResponse(BaseModel):
@@ -59,8 +62,52 @@ class DocumentUploadResponse(BaseModel):
 # Voice endpoints
 @app.get("/api/voices", response_model=List[VoiceInfo])
 async def list_voices():
-    """List available TTS voices."""
-    return tts_engine.available_voices
+    """List available TTS voices for the active engine."""
+    return engine_manager.active.available_voices
+
+
+# Engine endpoints
+class EngineInfo(BaseModel):
+    name: str
+    label: str
+    available: bool
+    active: bool = False
+
+
+class EngineSwitchRequest(BaseModel):
+    engine: str
+
+
+@app.get("/api/engines", response_model=List[EngineInfo])
+async def list_engines():
+    """List available TTS engines."""
+    engines = engine_manager.available_engines()
+    for e in engines:
+        e["active"] = e["name"] == engine_manager.active_name
+    return engines
+
+
+@app.get("/api/engine")
+async def get_engine():
+    """Get the currently active engine name."""
+    return {"engine": engine_manager.active_name}
+
+
+@app.post("/api/engine/switch")
+async def switch_engine(request: EngineSwitchRequest):
+    """Switch the active TTS engine at runtime."""
+    valid_names = {e["name"] for e in engine_manager.available_engines() if e["available"]}
+    if request.engine not in valid_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Engine '{request.engine}' is not available. Valid: {sorted(valid_names)}",
+        )
+    logger.info(f"Switching TTS engine: {engine_manager.active_name} → {request.engine}")
+    engine_manager.switch(request.engine)
+    return {
+        "engine": engine_manager.active_name,
+        "voices": len(engine_manager.active.available_voices),
+    }
 
 
 # TTS request model for POST body
@@ -106,7 +153,7 @@ async def stream_tts(request: TTSRequest):
         chunk_count = 0
         total_audio_bytes = 0
         try:
-            async for mp3_bytes, timing in tts_engine.generate_speech_stream(
+            async for mp3_bytes, timing in engine_manager.active.generate_speech_stream(
                 text_chunks, voice=voice, speed=speed
             ):
                 chunk_count += 1
@@ -229,7 +276,7 @@ async def stream_document(
             chunk_count = 0
             total_bytes = 0
             try:
-                async for mp3_bytes, timing in tts_engine.generate_speech_stream(
+                async for mp3_bytes, timing in engine_manager.active.generate_speech_stream(
                     text_chunks, voice=voice, speed=speed
                 ):
                     chunk_count += 1

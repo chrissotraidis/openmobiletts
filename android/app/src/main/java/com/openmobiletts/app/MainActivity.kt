@@ -1,11 +1,17 @@
 package com.openmobiletts.app
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
+import android.Manifest
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,18 +19,50 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.openmobiletts.app.ui.theme.OpenMobileTTSTheme
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
     private val modelDownloader = ModelDownloader()
-    private val ttsManager = TtsManager()
+    private var ttsServiceState = mutableStateOf<TtsService?>(null)
+    private var serviceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            ttsServiceState.value = (binder as TtsService.LocalBinder).getService()
+            serviceBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            ttsServiceState.value = null
+            serviceBound = false
+        }
+    }
+
+    // Notification permission launcher (Android 13+)
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or not — generation proceeds either way */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Request notification permission on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        // Bind to TtsService (creates it if needed)
+        Intent(this, TtsService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+
         setContent {
             OpenMobileTTSTheme {
                 Surface(
@@ -38,33 +76,52 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (serviceBound) {
+            unbindService(serviceConnection)
+            serviceBound = false
+        }
         super.onDestroy()
-        ttsManager.release()
     }
 
     @Composable
     private fun TtsScreen() {
         val scope = rememberCoroutineScope()
+        val app = application as OpenMobileTtsApp
+        val ttsService = ttsServiceState.value
 
-        var status by remember { mutableStateOf("Ready") }
         var isModelDownloaded by remember {
             mutableStateOf(modelDownloader.isModelDownloaded(filesDir))
         }
-        var isTtsReady by remember { mutableStateOf(false) }
+        var isTtsReady by remember { mutableStateOf(app.ttsManager.isInitialized) }
+        var localStatus by remember { mutableStateOf("Ready") }
         var isWorking by remember { mutableStateOf(false) }
         var downloadProgress by remember { mutableFloatStateOf(0f) }
+
+        // Observe service status
+        val serviceStatus by ttsService?.status?.collectAsState()
+            ?: remember { mutableStateOf(TtsService.Status.IDLE) }
+        val serviceMessage by ttsService?.statusMessage?.collectAsState()
+            ?: remember { mutableStateOf("") }
+
+        val displayStatus = if (serviceStatus != TtsService.Status.IDLE && serviceMessage.isNotEmpty()) {
+            serviceMessage
+        } else {
+            localStatus
+        }
+
+        val isBusy = isWorking || serviceStatus == TtsService.Status.GENERATING || serviceStatus == TtsService.Status.PLAYING
 
         // Auto-init TTS if model already downloaded
         LaunchedEffect(isModelDownloaded) {
             if (isModelDownloaded && !isTtsReady) {
-                status = "Initializing TTS engine..."
+                localStatus = "Initializing TTS engine..."
                 isWorking = true
                 try {
-                    ttsManager.init(modelDownloader.getModelDir(filesDir))
+                    app.ttsManager.init(modelDownloader.getModelDir(filesDir))
                     isTtsReady = true
-                    status = "TTS engine ready"
+                    localStatus = "TTS engine ready"
                 } catch (e: Exception) {
-                    status = "Init failed: ${e.message}"
+                    localStatus = "Init failed: ${e.message}"
                 }
                 isWorking = false
             }
@@ -95,7 +152,7 @@ class MainActivity : ComponentActivity() {
 
             // Status
             Text(
-                text = status,
+                text = displayStatus,
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -112,7 +169,7 @@ class MainActivity : ComponentActivity() {
                         .padding(horizontal = 32.dp),
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-            } else if (isWorking) {
+            } else if (isBusy) {
                 LinearProgressIndicator(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -128,23 +185,23 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             isWorking = true
                             downloadProgress = 0f
-                            status = "Downloading model..."
+                            localStatus = "Downloading model..."
                             try {
                                 modelDownloader.download(filesDir) { downloaded, total ->
                                     if (total > 0) {
                                         downloadProgress = downloaded.toFloat() / total
-                                        status = "Downloading: ${downloaded / 1024 / 1024} / ${total / 1024 / 1024} MB"
+                                        localStatus = "Downloading: ${downloaded / 1024 / 1024} / ${total / 1024 / 1024} MB"
                                     }
                                 }
                                 isModelDownloaded = true
-                                status = "Download complete!"
+                                localStatus = "Download complete!"
                             } catch (e: Exception) {
-                                status = "Download failed: ${e.message}"
+                                localStatus = "Download failed: ${e.message}"
                                 isWorking = false
                             }
                         }
                     },
-                    enabled = !isWorking,
+                    enabled = !isBusy,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp)
@@ -154,29 +211,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Speak button (shown when TTS is ready)
+            // Speak button — starts the foreground service
             if (isTtsReady) {
                 Button(
                     onClick = {
-                        scope.launch {
-                            isWorking = true
-                            status = "Generating speech..."
-                            try {
-                                val samples = ttsManager.generate(
-                                    text = "Hello! This is Open Mobile TTS running on your device.",
-                                    sid = 3,  // af_heart
-                                    speed = 1.0f,
-                                )
-                                status = "Playing audio..."
-                                playAudio(samples)
-                                status = "Done!"
-                            } catch (e: Exception) {
-                                status = "Error: ${e.message}"
-                            }
-                            isWorking = false
+                        val intent = Intent(this@MainActivity, TtsService::class.java).apply {
+                            putExtra(TtsService.EXTRA_TEXT, "Hello! This is Open Mobile TTS running on your device.")
+                            putExtra(TtsService.EXTRA_SID, 3) // af_heart
+                            putExtra(TtsService.EXTRA_SPEED, 1.0f)
                         }
+                        ContextCompat.startForegroundService(this@MainActivity, intent)
                     },
-                    enabled = !isWorking,
+                    enabled = !isBusy,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp)
@@ -184,43 +230,21 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Text("Speak")
                 }
+
+                // Stop button (visible during generation/playback)
+                if (serviceStatus == TtsService.Status.GENERATING || serviceStatus == TtsService.Status.PLAYING) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { ttsService?.stopGeneration() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 32.dp),
+                    ) {
+                        Text("Stop")
+                    }
+                }
             }
         }
-    }
-
-    private suspend fun playAudio(samples: FloatArray) = withContext(Dispatchers.IO) {
-        val bufferSize = AudioTrack.getMinBufferSize(
-            TtsManager.SAMPLE_RATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_FLOAT,
-        )
-
-        val audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(TtsManager.SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(maxOf(bufferSize, samples.size * 4))
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-
-        audioTrack.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-        audioTrack.play()
-
-        // Wait for playback to finish
-        val durationMs = (samples.size.toLong() * 1000) / TtsManager.SAMPLE_RATE
-        Thread.sleep(durationMs + 200) // small buffer for safety
-
-        audioTrack.stop()
-        audioTrack.release()
     }
 }

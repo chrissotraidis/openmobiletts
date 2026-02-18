@@ -36,11 +36,18 @@ _VOICE_TO_SID = {
     'zm_yunjian': 49, 'zm_yunxi': 50, 'zm_yunxia': 51, 'zm_yunyang': 52,
 }
 
-# English voices exposed in the UI (same set as KokoroBackend)
-_ENGLISH_VOICES = [
-    'af_heart', 'af_nova', 'af_sky', 'af_bella', 'af_sarah',
-    'am_adam', 'am_michael', 'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis',
-]
+# Language prefix → (language_code, language_name)
+_LANG_MAP = {
+    'a': ('en-us', 'English (US)'),
+    'b': ('en-gb', 'English (UK)'),
+    'e': ('es', 'Spanish'),
+    'f': ('fr', 'French'),
+    'h': ('hi', 'Hindi'),
+    'i': ('it', 'Italian'),
+    'j': ('ja', 'Japanese'),
+    'p': ('pt-br', 'Portuguese'),
+    'z': ('zh', 'Chinese'),
+}
 
 
 class SherpaOnnxBackend(TTSBackend):
@@ -101,7 +108,20 @@ class SherpaOnnxBackend(TTSBackend):
 
     @property
     def available_voices(self) -> List[Dict[str, str]]:
-        return [{'name': v, 'language': 'a'} for v in _ENGLISH_VOICES]
+        result = []
+        for voice_name in _VOICE_TO_SID:
+            prefix = voice_name[0]
+            gender_char = voice_name[1]
+            lang_code, lang_name = _LANG_MAP.get(prefix, ('en-us', 'English (US)'))
+            display = voice_name.split('_', 1)[1].title() if '_' in voice_name else voice_name
+            result.append({
+                'name': voice_name,
+                'language': lang_code,
+                'language_name': lang_name,
+                'gender': 'female' if gender_char == 'f' else 'male',
+                'display_name': display,
+            })
+        return result
 
     def _voice_to_sid(self, voice: str) -> int:
         """Map voice name string to integer speaker ID."""

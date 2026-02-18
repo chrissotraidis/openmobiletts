@@ -7,8 +7,8 @@
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
 	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
-	import { apiUrl, healthCheck } from '$lib/services/api';
-	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2, Wifi, CheckCircle, XCircle } from 'lucide-svelte';
+	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine } from '$lib/services/api';
+	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2, Wifi, CheckCircle, XCircle, Cpu } from 'lucide-svelte';
 
 	let isIOS = $state(false);
 	let activeTab = $state('generate');
@@ -17,9 +17,69 @@
 	let connectionStatus = $state(null); // null | 'success' | 'error'
 	let connectionMessage = $state('');
 
+	// Engine & voice state
+	let engines = $state([]);
+	let voices = $state([]);
+	let settingsLang = $state('');
+	let switchingEngine = $state(false);
+
+	const settingsLanguages = $derived(() => {
+		const map = new Map();
+		for (const v of voices) {
+			if (!map.has(v.language)) {
+				map.set(v.language, v.language_name);
+			}
+		}
+		return [...map.entries()].map(([code, name]) => ({ code, name }));
+	});
+
+	const settingsFilteredVoices = $derived(() => {
+		if (!settingsLang) return voices;
+		return voices.filter((v) => v.language === settingsLang);
+	});
+
+	const activeEngineName = $derived(() => {
+		const active = engines.find((e) => e.active);
+		return active ? active.label : 'Loading...';
+	});
+
+	async function loadVoicesAndEngines() {
+		try {
+			const [v, e] = await Promise.all([fetchVoices(), fetchEngines()]);
+			voices = v;
+			engines = e;
+			const current = voices.find((vv) => vv.name === $settingsStore.defaultVoice);
+			settingsLang = current ? current.language : (voices[0]?.language || '');
+		} catch {
+			// silently fail — selectors remain empty
+		}
+	}
+
+	async function handleEngineSwitch(newEngine) {
+		if (switchingEngine) return;
+		switchingEngine = true;
+		try {
+			await switchEngine(newEngine);
+			settingsStore.update('engine', newEngine);
+			// Reload voices + engines after switch
+			await loadVoicesAndEngines();
+			// If current voice doesn't exist in new engine, pick first voice
+			const voiceExists = voices.some((v) => v.name === $settingsStore.defaultVoice);
+			if (!voiceExists && voices.length > 0) {
+				settingsStore.update('defaultVoice', voices[0].name);
+				settingsLang = voices[0].language;
+			}
+		} catch (err) {
+			console.error('Engine switch failed:', err);
+		} finally {
+			switchingEngine = false;
+		}
+	}
+
 	onMount(() => {
 		if (browser) {
 			isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+			loadVoicesAndEngines();
 		}
 	});
 
@@ -187,34 +247,81 @@
 							<h3 class="text-lg font-semibold">TTS Defaults</h3>
 						</div>
 
-						<!-- Default Voice -->
+						<!-- TTS Engine -->
+						{#if engines.length > 0}
+							<div class="space-y-2">
+								<div class="flex items-center gap-2 px-1">
+									<Cpu size={14} class="text-slate-500" />
+									<span class="text-xs font-bold text-slate-500 uppercase tracking-widest">TTS Engine</span>
+								</div>
+								<div class="relative">
+									<select
+										value={engines.find((e) => e.active)?.name || ''}
+										onchange={(e) => handleEngineSwitch(e.target.value)}
+										disabled={switchingEngine}
+										class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-sm disabled:opacity-50"
+									>
+										{#each engines.filter((e) => e.available) as eng}
+											<option value={eng.name}>{eng.label}</option>
+										{/each}
+									</select>
+									<div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+										{#if switchingEngine}
+											<Loader2 size={16} class="animate-spin" />
+										{:else}
+											<ChevronDown size={18} />
+										{/if}
+									</div>
+								</div>
+							</div>
+						{/if}
+
+						<!-- Default Voice (Language + Voice) -->
 						<div class="space-y-2">
 							<div class="flex items-center gap-2 px-1">
 								<Volume2 size={14} class="text-slate-500" />
 								<span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Default Voice</span>
 							</div>
-							<div class="relative">
-								<select
-									value={$settingsStore.defaultVoice}
-									onchange={(e) => settingsStore.update('defaultVoice', e.target.value)}
-									class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-sm"
-								>
-									<option value="af_heart">Female (Heart)</option>
-									<option value="af_nova">Female (Nova)</option>
-									<option value="af_sky">Female (Sky)</option>
-									<option value="af_bella">Female (Bella)</option>
-									<option value="af_sarah">Female (Sarah)</option>
-									<option value="am_adam">Male (Adam)</option>
-									<option value="am_michael">Male (Michael)</option>
-									<option value="bf_emma">British Female (Emma)</option>
-									<option value="bf_isabella">British Female (Isabella)</option>
-									<option value="bm_george">British Male (George)</option>
-									<option value="bm_lewis">British Male (Lewis)</option>
-								</select>
-								<div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
-									<ChevronDown size={18} />
+							{#if voices.length > 0}
+								<div class="flex gap-2">
+									<!-- Language picker -->
+									<div class="relative flex-1">
+										<select
+											value={settingsLang}
+											onchange={(e) => {
+												settingsLang = e.target.value;
+												const first = voices.find((v) => v.language === settingsLang);
+												if (first) settingsStore.update('defaultVoice', first.name);
+											}}
+											class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-sm"
+										>
+											{#each settingsLanguages() as lang}
+												<option value={lang.code}>{lang.name}</option>
+											{/each}
+										</select>
+										<div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+											<ChevronDown size={18} />
+										</div>
+									</div>
+									<!-- Voice picker -->
+									<div class="relative flex-1">
+										<select
+											value={$settingsStore.defaultVoice}
+											onchange={(e) => settingsStore.update('defaultVoice', e.target.value)}
+											class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all text-sm"
+										>
+											{#each settingsFilteredVoices() as v}
+												<option value={v.name}>{v.display_name} ({v.gender === 'female' ? 'F' : 'M'})</option>
+											{/each}
+										</select>
+										<div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+											<ChevronDown size={18} />
+										</div>
+									</div>
 								</div>
-							</div>
+							{:else}
+								<p class="text-sm text-slate-500 px-1">Loading voices...</p>
+							{/if}
 						</div>
 
 						<!-- Default Speed -->
@@ -337,7 +444,7 @@
 							</div>
 							<div class="flex justify-between">
 								<span>Engine</span>
-								<span class="text-slate-200">Kokoro TTS (Local)</span>
+								<span class="text-slate-200">{activeEngineName()}</span>
 							</div>
 							<div class="flex justify-between">
 								<span>Architecture</span>

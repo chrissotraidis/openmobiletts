@@ -4,6 +4,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { cacheAudio, getCachedAudio } from '$lib/services/audioCache';
 import { apiUrl } from '$lib/services/api';
+import { playlistStore } from '$lib/stores/playlist';
 
 // Playback states
 export const PlayState = {
@@ -33,6 +34,26 @@ function createPlayerStore() {
 	let timingData = [];
 	let timeUpdateHandler = null;
 
+	// Notification support for background generation
+	function notifyGenerationComplete() {
+		if (typeof document === 'undefined' || !document.hidden) return;
+		if (!('Notification' in globalThis)) return;
+		if (Notification.permission === 'granted') {
+			new Notification('Audio Ready', {
+				body: 'Your TTS generation is complete.',
+				icon: '/favicon.png',
+				tag: 'tts-ready',
+			});
+		}
+	}
+
+	function requestNotificationPermission() {
+		if (typeof Notification === 'undefined') return;
+		if (Notification.permission === 'default') {
+			Notification.requestPermission();
+		}
+	}
+
 	function resetAudio() {
 		if (audioElement) {
 			audioElement.pause();
@@ -53,9 +74,18 @@ function createPlayerStore() {
 	}
 
 	function handleEnded() {
-		state.set(PlayState.IDLE);
-		activeSegmentIndex.set(-1);
+		// Check if there's a next track in the playlist queue
+		const nextEntry = playlistStore.advance();
+		if (nextEntry) {
+			// Auto-play the next queued track
+			store.playFromHistory(nextEntry, true);
+			return;
+		}
+		state.set(PlayState.PAUSED);
 	}
+
+	// Reference to the store object (set after creation) for use in handleEnded
+	let store = null;
 
 	function updateActiveSegment() {
 		if (!audioElement) return;
@@ -73,7 +103,7 @@ function createPlayerStore() {
 		activeSegmentIndex.set(found);
 	}
 
-	return {
+	store = {
 		state,
 		currentTime,
 		duration,
@@ -100,6 +130,7 @@ function createPlayerStore() {
 			speed.set(speedVal);
 			inputText.set(text);
 			errorMessage.set('');
+			requestNotificationPermission();
 
 			try {
 				// Use POST with JSON body to handle arbitrarily long text
@@ -190,6 +221,7 @@ function createPlayerStore() {
 				});
 
 				duration.set(audioElement.duration);
+				notifyGenerationComplete();
 
 				if (autoPlay) {
 					audioElement.play();
@@ -271,6 +303,10 @@ function createPlayerStore() {
 
 		play() {
 			if (audioElement) {
+				// If audio ended (at the end), restart from beginning
+				if (audioElement.ended) {
+					audioElement.currentTime = 0;
+				}
 				audioElement.play();
 				state.set(PlayState.PLAYING);
 			}
@@ -315,6 +351,8 @@ function createPlayerStore() {
 			return null;
 		},
 	};
+
+	return store;
 }
 
 export const playerStore = createPlayerStore();

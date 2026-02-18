@@ -2,14 +2,47 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
-	import { uploadDocument } from '$lib/services/api';
-	import { Upload, Loader2, Clock, Play, ChevronDown } from 'lucide-svelte';
-	import { onDestroy } from 'svelte';
+	import { uploadDocument, fetchVoices, fetchEngines } from '$lib/services/api';
+	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu } from 'lucide-svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let text = $state('');
 	let isUploading = $state(false);
 	let uploadError = $state('');
 	let fileInput;
+	let voices = $state([]);
+	let selectedLang = $state('');
+	let activeEngine = $state('');
+
+	// Group voices by language
+	const languages = $derived(() => {
+		const map = new Map();
+		for (const v of voices) {
+			if (!map.has(v.language)) {
+				map.set(v.language, v.language_name);
+			}
+		}
+		return [...map.entries()].map(([code, name]) => ({ code, name }));
+	});
+
+	const filteredVoices = $derived(() => {
+		if (!selectedLang) return voices;
+		return voices.filter((v) => v.language === selectedLang);
+	});
+
+	onMount(async () => {
+		try {
+			const [v, e] = await Promise.all([fetchVoices(), fetchEngines()]);
+			voices = v;
+			const active = e.find((eng) => eng.active);
+			activeEngine = active ? active.label : '';
+			// Derive language from current voice
+			const current = voices.find((vv) => vv.name === $settingsStore.defaultVoice);
+			selectedLang = current ? current.language : (voices[0]?.language || '');
+		} catch {
+			// Fallback — keep empty, selects will be hidden
+		}
+	});
 
 	let playerState = $state(PlayState.IDLE);
 	const unsubState = playerStore.state.subscribe((s) => (playerState = s));
@@ -133,31 +166,52 @@
 		<!-- Spacer -->
 		<div class="flex-1"></div>
 
-		<!-- Voice + Speed (inline) -->
+		<!-- Engine + Language + Voice + Speed (inline) -->
 		<div class="flex items-center gap-2">
-			<div class="relative">
-				<select
-					value={$settingsStore.defaultVoice}
-					onchange={(e) => settingsStore.update('defaultVoice', e.target.value)}
-					disabled={isBusy}
-					class="bg-slate-900/60 border border-white/10 rounded-xl pl-3 pr-8 py-2 text-xs appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[120px]"
-				>
-					<option value="af_heart">Heart</option>
-					<option value="af_nova">Nova</option>
-					<option value="af_sky">Sky</option>
-					<option value="af_bella">Bella</option>
-					<option value="af_sarah">Sarah</option>
-					<option value="am_adam">Adam</option>
-					<option value="am_michael">Michael</option>
-					<option value="bf_emma">Emma (UK)</option>
-					<option value="bf_isabella">Isabella (UK)</option>
-					<option value="bm_george">George (UK)</option>
-					<option value="bm_lewis">Lewis (UK)</option>
-				</select>
-				<div class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
-					<ChevronDown size={14} />
+			{#if activeEngine}
+				<span class="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-2 py-2 font-medium whitespace-nowrap">
+					<Cpu size={11} class="text-blue-400" />
+					{activeEngine}
+				</span>
+			{/if}
+			{#if voices.length > 0}
+				<!-- Language dropdown -->
+				<div class="relative">
+					<select
+						value={selectedLang}
+						onchange={(e) => {
+							selectedLang = e.target.value;
+							const first = voices.find((v) => v.language === selectedLang);
+							if (first) settingsStore.update('defaultVoice', first.name);
+						}}
+						disabled={isBusy}
+						class="bg-slate-900/60 border border-white/10 rounded-xl pl-3 pr-7 py-2 text-xs appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[90px]"
+					>
+						{#each languages() as lang}
+							<option value={lang.code}>{lang.name}</option>
+						{/each}
+					</select>
+					<div class="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+						<ChevronDown size={12} />
+					</div>
 				</div>
-			</div>
+				<!-- Voice dropdown -->
+				<div class="relative">
+					<select
+						value={$settingsStore.defaultVoice}
+						onchange={(e) => settingsStore.update('defaultVoice', e.target.value)}
+						disabled={isBusy}
+						class="bg-slate-900/60 border border-white/10 rounded-xl pl-3 pr-7 py-2 text-xs appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[100px]"
+					>
+						{#each filteredVoices() as v}
+							<option value={v.name}>{v.display_name} ({v.gender === 'female' ? 'F' : 'M'})</option>
+						{/each}
+					</select>
+					<div class="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+						<ChevronDown size={12} />
+					</div>
+				</div>
+			{/if}
 
 			<div class="flex items-center gap-2 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2">
 				<Clock size={12} class="text-slate-500" />

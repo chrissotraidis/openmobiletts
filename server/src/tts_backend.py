@@ -57,6 +57,7 @@ class TTSBackend(ABC):
         """Get list of available voices.
 
         Returns:
-            List of voice dicts with 'name' and 'language' keys
+            List of voice dicts with 'name', 'language', 'language_name',
+            'gender', and 'display_name' keys.
         """
         ...

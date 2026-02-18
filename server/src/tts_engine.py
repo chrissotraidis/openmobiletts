@@ -1,7 +1,8 @@
-"""Kokoro TTS backend and engine factory."""
+"""Kokoro TTS backend, engine manager, and factory."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import AsyncGenerator, Dict, List, Tuple
 
 import numpy as np
@@ -39,7 +40,7 @@ class KokoroBackend(TTSBackend):
         self._voices = self._get_available_voices()
 
     def _get_available_voices(self) -> List[Dict[str, str]]:
-        """Get list of available voices for the current language."""
+        """Get list of available voices with rich metadata."""
         voices_by_lang = {
             'a': [
                 'af_heart', 'af_nova', 'af_sky', 'af_bella', 'af_sarah',
@@ -50,11 +51,26 @@ class KokoroBackend(TTSBackend):
             ],
         }
 
+        lang_map = {
+            'a': ('en-us', 'English (US)'),
+            'b': ('en-gb', 'English (UK)'),
+        }
+
         voice_names = voices_by_lang.get(self.lang_code, [])
-        return [
-            {'name': voice, 'language': self.lang_code}
-            for voice in voice_names
-        ]
+        result = []
+        for v in voice_names:
+            prefix = v[0]
+            gender_char = v[1]
+            lang_code, lang_name = lang_map.get(prefix, ('en-us', 'English (US)'))
+            display = v.split('_', 1)[1].title() if '_' in v else v
+            result.append({
+                'name': v,
+                'language': lang_code,
+                'language_name': lang_name,
+                'gender': 'female' if gender_char == 'f' else 'male',
+                'display_name': display,
+            })
+        return result
 
     @property
     def available_voices(self) -> List[Dict[str, str]]:
@@ -143,13 +159,52 @@ class KokoroBackend(TTSBackend):
 TTSEngine = KokoroBackend
 
 
-def create_tts_engine() -> TTSBackend:
-    """Factory function to create the configured TTS backend.
+class EngineManager:
+    """Manages TTS backends with lazy loading and runtime switching."""
 
-    Reads settings.TTS_ENGINE to decide which backend to instantiate.
-    Returns a TTSBackend instance.
+    def __init__(self):
+        self._engines: Dict[str, TTSBackend] = {}
+        self._active_name: str = settings.TTS_ENGINE
+        self._active: TTSBackend | None = None
+
+    @property
+    def active(self) -> TTSBackend:
+        if self._active is None:
+            self._active = self._load(self._active_name)
+        return self._active
+
+    @property
+    def active_name(self) -> str:
+        return self._active_name
+
+    def _load(self, name: str) -> TTSBackend:
+        if name not in self._engines:
+            if name == "sherpa-onnx":
+                from .sherpa_backend import SherpaOnnxBackend
+                self._engines[name] = SherpaOnnxBackend()
+            else:
+                self._engines[name] = KokoroBackend()
+        return self._engines[name]
+
+    def switch(self, name: str) -> None:
+        self._active = self._load(name)
+        self._active_name = name
+
+    def available_engines(self) -> list:
+        engines = [{"name": "kokoro", "label": "Kokoro (PyTorch)", "available": True}]
+        sherpa_available = Path(settings.SHERPA_MODEL_DIR, "model.onnx").exists()
+        engines.append({
+            "name": "sherpa-onnx",
+            "label": "Sherpa-ONNX (Multi-lang)",
+            "available": sherpa_available,
+        })
+        return engines
+
+
+def create_tts_engine() -> TTSBackend:
+    """Factory function — backward-compatible wrapper.
+
+    Returns the default EngineManager's active engine.
     """
-    if settings.TTS_ENGINE == "sherpa-onnx":
-        from .sherpa_backend import SherpaOnnxBackend
-        return SherpaOnnxBackend()
-    return KokoroBackend()
+    manager = EngineManager()
+    return manager.active

@@ -72,6 +72,34 @@ export async function uploadDocument(file) {
 }
 
 /**
+ * Fetch available TTS engines.
+ * @returns {Promise<Array<{name: string, label: string, available: boolean, active: boolean}>>}
+ */
+export async function fetchEngines() {
+	const res = await fetch(apiUrl('/api/engines'));
+	if (!res.ok) throw new Error('Failed to fetch engines');
+	return res.json();
+}
+
+/**
+ * Switch the active TTS engine.
+ * @param {string} name - Engine name (e.g., 'kokoro', 'sherpa-onnx')
+ * @returns {Promise<{engine: string, voices: number}>}
+ */
+export async function switchEngine(name) {
+	const res = await fetch(apiUrl('/api/engine/switch'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ engine: name }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to switch engine');
+	}
+	return res.json();
+}
+
+/**
  * Check server health.
  * @returns {Promise<{status: string, version: string}>}
  */
