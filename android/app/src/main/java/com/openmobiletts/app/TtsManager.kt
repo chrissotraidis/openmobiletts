@@ -32,6 +32,18 @@ class TtsManager {
     suspend fun init(modelDir: String) = withContext(Dispatchers.IO) {
         Log.i(TAG, "Initializing Sherpa-ONNX TTS from: $modelDir")
 
+        // Build lexicon path — multi-lang models require it
+        val lexiconFile = java.io.File("$modelDir/lexicon-us-en.txt")
+        val lexicon = if (lexiconFile.exists()) lexiconFile.absolutePath else ""
+
+        // Build dict dir if present
+        val dictDirFile = java.io.File("$modelDir/dict")
+        val dictDir = if (dictDirFile.exists()) dictDirFile.absolutePath else ""
+
+        // Build rule FSTs if present
+        val fstFiles = java.io.File(modelDir).listFiles { _, name -> name.endsWith(".fst") }
+        val ruleFsts = fstFiles?.sorted()?.joinToString(",") { it.absolutePath } ?: ""
+
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 kokoro = OfflineTtsKokoroModelConfig(
@@ -39,9 +51,12 @@ class TtsManager {
                     voices = "$modelDir/voices.bin",
                     tokens = "$modelDir/tokens.txt",
                     dataDir = "$modelDir/espeak-ng-data",
+                    lexicon = lexicon,
+                    dictDir = dictDir,
                 ),
                 numThreads = 2,
             ),
+            ruleFsts = ruleFsts,
         )
 
         tts = OfflineTts(config = config)

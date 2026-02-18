@@ -4,25 +4,27 @@ Native Android app with on-device TTS powered by Sherpa-ONNX + Kokoro.
 
 ## Setup
 
-### 1. Download Sherpa-ONNX AAR
+### 1. Download Sherpa-ONNX JNI Libraries
 
-Download the pre-built AAR from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases) page:
+Download the pre-built native libraries from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases) page:
 
 ```bash
-# Download the Android package (pick the latest version)
-curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.13/sherpa-onnx-v1.12.13-android.tar.bz2
-tar xf sherpa-onnx-v1.12.13-android.tar.bz2
+cd /tmp
+curl -SL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.25/sherpa-onnx-v1.12.25-android.tar.bz2
+tar xf sherpa-onnx-v1.12.25-android.tar.bz2
 
-# Copy the AAR to app/libs/
-cp sherpa-onnx-v1.12.13-android/sherpa-onnx*.aar android/app/libs/
+# Copy JNI libs to the project
+cp -r jniLibs/* android/app/src/main/jniLibs/
 ```
+
+This provides `.so` files for all 4 ABIs: arm64-v8a, armeabi-v7a, x86, x86_64.
 
 ### 2. Open in Android Studio
 
 1. Open Android Studio
 2. File > Open > select the `android/` directory
 3. Wait for Gradle sync to complete
-4. Build and run on an arm64-v8a device/emulator
+4. Build and run on a device/emulator
 
 ### 3. First Launch
 
@@ -31,7 +33,8 @@ After download, tap "Speak" to hear on-device TTS.
 
 ## Architecture
 
-- **TtsManager** — Wraps Sherpa-ONNX `OfflineTts` with Kotlin coroutines
+- **Tts.kt** — Sherpa-ONNX Kotlin API (JNI bindings for `OfflineTts`)
+- **TtsManager** — Wraps `OfflineTts` with Kotlin coroutines for init/generate
 - **ModelDownloader** — Downloads INT8 Kokoro model on first launch
 - **MainActivity** — Compose UI with download + speak buttons
 

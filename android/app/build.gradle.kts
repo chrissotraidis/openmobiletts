@@ -69,10 +69,10 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // Sherpa-ONNX — place AAR in app/libs/
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    // Sherpa-ONNX — JNI .so files in app/src/main/jniLibs/, Kotlin API in source
+    // No AAR needed: native libs are bundled directly
 
-    // Archive extraction for model download
+    // Archive extraction for model download (tar.bz2)
     implementation("org.apache.commons:commons-compress:1.26.1")
 
     // Debug
