@@ -116,15 +116,6 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Unique Focus**: Quality assurance data
 **Overlap Prevention**: No feature descriptions, just test results
 
-### docs/MIGRATION.md
-**Purpose**: Records the architecture change from client-server to monolithic
-**Audience**: Developers needing historical context
-**Contents**:
-- What changed and why
-- What was removed and added
-**Unique Focus**: One specific architectural decision
-**Overlap Prevention**: Historical record only
-
 ### docs/SECURITY_CHECKLIST.md
 **Purpose**: Security considerations for deployment
 **Audience**: Anyone deploying beyond localhost
@@ -136,46 +127,35 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 **Overlap Prevention**: No setup instructions
 
 ### docs/ROADMAP.md
-**Purpose**: Master version plan — v1 vs v2 architecture, what changes, implementation phases
-**Audience**: Everyone (planning reference before starting v2)
+**Purpose**: Master version plan — architecture, implementation phases, multi-language plan
+**Audience**: Everyone
 **Contents**:
-- v1 (current): Capacitor + server architecture
-- v2 (planned): Native Sherpa-ONNX + desktop kept
-- What changes, what stays, what gets added/removed
+- Current architecture (native Android + desktop web app)
 - Implementation phases, tech stack, expected performance
+- Multi-language support plan
 **Unique Focus**: Single source of truth for version strategy
-**Overlap Prevention**: References IMPLEMENTATION_PLAN.md for code-level details, OFFLINE_TTS_FEASIBILITY.md for research
-
-### docs/ANDROID_APP_GUIDE.md
-**Purpose**: Complete guide for running the app on Android
-**Audience**: Users who want to use the app on their Android phone
-**Contents**:
-- How Capacitor wraps the web app
-- Android Studio setup and build
-- Server connection configuration
-- Troubleshooting
-**Unique Focus**: Android-specific setup and usage
-**Overlap Prevention**: No general architecture or server setup
+**Overlap Prevention**: References IMPLEMENTATION_PLAN.md for code-level details
 
 ### docs/IMPLEMENTATION_PLAN.md
-**Purpose**: Roadmap for a future native Android app with on-device TTS
-**Audience**: Future contributors
+**Purpose**: Detailed implementation plan for Android WebView app and desktop dual-engine
+**Audience**: Contributors
 **Contents**:
-- Sherpa-ONNX integration plan
-- Native Kotlin architecture
-- Model optimization strategy
-**Unique Focus**: Aspirational future direction
-**Overlap Prevention**: Not about the current Capacitor implementation
+- WebView + NanoHTTPD architecture
+- Sherpa-ONNX integration
+- API endpoint mapping
+**Unique Focus**: Code-level implementation details
+**Overlap Prevention**: ROADMAP.md has the high-level strategy
 
-### docs/OFFLINE_TTS_FEASIBILITY.md
-**Purpose**: Research into running Kokoro TTS directly on a mobile device
-**Audience**: Future contributors
+### docs/ANDROID_ARCHITECTURE.md
+**Purpose**: Complete Android architecture reference
+**Audience**: Developers working on the Android app
 **Contents**:
-- Model size and memory analysis
-- INT8 quantization feasibility
-- Device performance expectations
-**Unique Focus**: Technical feasibility research
-**Overlap Prevention**: No implementation details, just analysis
+- Why WebView instead of Compose
+- NanoHTTPD server design
+- Build process (copy-webapp.sh)
+- API compatibility table
+**Unique Focus**: Android-specific architecture and build process
+**Overlap Prevention**: IMPLEMENTATION_PLAN.md covers code-level details
 
 ## Rules to Prevent Overlap
 
@@ -187,7 +167,6 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 6. **IMPL_STATUS** = Status only, no descriptions
 7. **TESTING** = Results only, no feature details
 8. **CHANGELOG** = History only, no current state
-9. **MIGRATION** = Architecture change record only
 
 ## When to Update Which Doc
 
@@ -200,5 +179,5 @@ This document clarifies the distinct purpose of each markdown file to prevent ov
 | Performance change | LIMITS_AND_CONSTRAINTS.md |
 | Test results change | testing-summary.md |
 | Project description | README.md |
-| Android changes | ANDROID_APP_GUIDE.md |
+| Android changes | ANDROID_ARCHITECTURE.md + ROADMAP.md |
 | Security changes | SECURITY_CHECKLIST.md |

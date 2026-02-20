@@ -6,46 +6,31 @@
 	let playerState = $state(PlayState.IDLE);
 	let segments = $state([]);
 	let inputText = $state('');
-	let startTime = $state(null);
+	let serverTotalChunks = $state(0);
 	let elapsedTime = $state(0);
-	let intervalId = null;
 
 	const unsubs = [
-		playerStore.state.subscribe((s) => {
-			playerState = s;
-			if (s === PlayState.GENERATING && !startTime) {
-				startTime = Date.now();
-				intervalId = setInterval(() => {
-					elapsedTime = Math.floor((Date.now() - startTime) / 1000);
-				}, 100);
-			} else if (s !== PlayState.GENERATING) {
-				startTime = null;
-				elapsedTime = 0;
-				if (intervalId) {
-					clearInterval(intervalId);
-					intervalId = null;
-				}
-			}
-		}),
+		playerStore.state.subscribe((s) => (playerState = s)),
 		playerStore.segments.subscribe((s) => (segments = s)),
 		playerStore.inputText.subscribe((t) => (inputText = t)),
+		playerStore.totalChunks.subscribe((n) => (serverTotalChunks = n)),
+		playerStore.generationElapsed.subscribe((t) => (elapsedTime = t)),
 	];
-	onDestroy(() => {
-		unsubs.forEach((u) => u());
-		if (intervalId) clearInterval(intervalId);
-	});
+	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
 	const chunksReceived = $derived(segments.length);
 
-	// Estimate total chunks based on text length
-	// ~700 chars per chunk (175-250 tokens at ~4 chars/token)
-	const estimatedTotalChunks = $derived(Math.max(1, Math.ceil(inputText.length / 700)));
+	// Use server-reported chunk count when available, otherwise estimate from text length
+	const estimatedTotalChunks = $derived(
+		serverTotalChunks > 0
+			? serverTotalChunks
+			: Math.max(1, Math.ceil(inputText.length / 700))
+	);
 
-	// Calculate progress percentage (cap at 95% until complete to account for estimation error)
 	const progressPercent = $derived(
 		chunksReceived > 0
-			? Math.min(95, Math.round((chunksReceived / estimatedTotalChunks) * 100))
+			? Math.min(99, Math.round((chunksReceived / estimatedTotalChunks) * 100))
 			: 0
 	);
 
@@ -97,7 +82,7 @@
 				<div class="flex items-center justify-between mt-2">
 					<span class="text-[10px] text-slate-500">
 						{#if chunksReceived > 0}
-							<span class="text-blue-400">{chunksReceived}</span> of ~{estimatedTotalChunks} chunks
+							<span class="text-blue-400">{chunksReceived}</span> of {serverTotalChunks > 0 ? '' : '~'}{estimatedTotalChunks} chunks
 						{:else}
 							Analyzing text...
 						{/if}

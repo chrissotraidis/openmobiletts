@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Open Mobile TTS</string>
-    <string name="title_activity_main">Open Mobile TTS</string>
-    <string name="package_name">com.openmobiletts.app</string>
-    <string name="custom_url_scheme">com.openmobiletts.app</string>
-</resources>

@@ -2,6 +2,7 @@
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -27,7 +28,7 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# CORS — allow all origins for Android/Capacitor WebView access
+# CORS — allow all origins for local/network access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -188,13 +189,24 @@ async def stream_tts(request: TTSRequest):
 @app.post("/api/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(file: UploadFile = File(...)):
     """Upload a document (PDF, DOCX, TXT) and extract text for TTS."""
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename is required")
+
     logger.info(f"Document upload: filename={file.filename}, content_type={file.content_type}")
 
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    # Sanitize filename to prevent path traversal
-    safe_name = Path(file.filename).name
+    # Validate extension before writing to disk
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in DocumentProcessor.SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format: {suffix}. Supported: {', '.join(DocumentProcessor.SUPPORTED_FORMATS)}",
+        )
+
+    # Use UUID prefix to prevent filename collisions from concurrent uploads
+    safe_name = f"{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
     file_path = Path(settings.UPLOAD_DIR) / safe_name
 
     try:
@@ -224,11 +236,11 @@ async def upload_document(file: UploadFile = File(...)):
             "chunk_count": len(chunks),
         }
 
-    except ValueError as e:
-        logger.error(f"Document processing error: {e}")
+    except (ValueError, RuntimeError, OSError) as e:
+        logger.error(f"Document processing error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail=f"Document processing failed: {e}",
         )
 
     finally:
@@ -243,13 +255,24 @@ async def stream_document(
     speed: float = settings.DEFAULT_SPEED,
 ):
     """Upload a document and stream TTS audio directly."""
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename is required")
+
     logger.info(f"Document stream: filename={file.filename}, voice={voice}, speed={speed}")
 
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     file_size = 0
 
-    # Sanitize filename to prevent path traversal
-    safe_name = Path(file.filename).name
+    # Validate extension before writing to disk
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in DocumentProcessor.SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format: {suffix}. Supported: {', '.join(DocumentProcessor.SUPPORTED_FORMATS)}",
+        )
+
+    # Use UUID prefix to prevent filename collisions from concurrent uploads
+    safe_name = f"{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
     file_path = Path(settings.UPLOAD_DIR) / safe_name
 
     try:
@@ -300,11 +323,11 @@ async def stream_document(
             },
         )
 
-    except ValueError as e:
-        logger.error(f"Document stream processing error: {e}")
+    except (ValueError, RuntimeError, OSError) as e:
+        logger.error(f"Document stream processing error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail=f"Document processing failed: {e}",
         )
 
     finally:
@@ -316,7 +339,7 @@ async def stream_document(
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": "2.0.0"}
 
 
 # Logs export endpoint (for mobile bug reports)
@@ -355,6 +378,6 @@ else:
     async def root():
         return {
             "name": "Open Mobile TTS",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "status": "Client not built. Run: cd client && npm run build",
         }

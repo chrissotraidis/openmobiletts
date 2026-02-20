@@ -62,28 +62,11 @@
 	// Progress tracking during generation
 	let genSegments = $state([]);
 	let genInputText = $state('');
-	let genStartTime = $state(null);
+	let genTotalChunks = $state(0);
 	let genElapsed = $state(0);
-	let genIntervalId = null; // NOT $state - just a reference
 
 	const unsubs = [
-		playerStore.state.subscribe((s) => {
-			playerState = s;
-			// Start/stop elapsed timer based on generation state
-			if (s === PlayState.GENERATING && !genStartTime) {
-				genStartTime = Date.now();
-				genIntervalId = setInterval(() => {
-					genElapsed = Math.floor((Date.now() - genStartTime) / 1000);
-				}, 100);
-			} else if (s !== PlayState.GENERATING) {
-				genStartTime = null;
-				genElapsed = 0;
-				if (genIntervalId) {
-					clearInterval(genIntervalId);
-					genIntervalId = null;
-				}
-			}
-		}),
+		playerStore.state.subscribe((s) => (playerState = s)),
 		playerStore.currentTime.subscribe((t) => (currentTime = t)),
 		playerStore.duration.subscribe((d) => (duration = d)),
 		playerStore.voice.subscribe((v) => (voiceName = v)),
@@ -92,13 +75,12 @@
 		playerStore.errorMessage.subscribe((e) => (errorMessage = e)),
 		playerStore.segments.subscribe((s) => (genSegments = s)),
 		playerStore.inputText.subscribe((t) => (genInputText = t)),
+		playerStore.totalChunks.subscribe((n) => (genTotalChunks = n)),
+		playerStore.generationElapsed.subscribe((t) => (genElapsed = t)),
 		playlistStore.items.subscribe((items) => (queueItems = items)),
 		playlistStore.currentIndex.subscribe((i) => (queueCurrentIndex = i)),
 	];
-	onDestroy(() => {
-		unsubs.forEach((u) => u());
-		if (genIntervalId) clearInterval(genIntervalId);
-	});
+	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const playbackRates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
@@ -115,11 +97,16 @@
 	const progress = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 
 	// Generation progress calculation
+	// Server sends CHUNKS:{total} for accurate count; fallback to text length estimate
 	const genChunksReceived = $derived(genSegments.length);
-	const genEstimatedTotal = $derived(Math.max(1, Math.ceil(genInputText.length / 700)));
+	const genEstimatedTotal = $derived(
+		genTotalChunks > 0
+			? genTotalChunks
+			: Math.max(1, Math.ceil(genInputText.length / 700))
+	);
 	const genProgressPct = $derived(
 		genChunksReceived > 0
-			? Math.min(95, Math.round((genChunksReceived / genEstimatedTotal) * 100))
+			? Math.min(99, Math.round((genChunksReceived / genEstimatedTotal) * 100))
 			: 0
 	);
 
@@ -167,19 +154,13 @@
 
 	const displayVoice = $derived(voiceDisplayNames[voiceName] || voiceName);
 
-	function downloadCurrentAudio() {
+	async function downloadCurrentAudio() {
 		const blob = playerStore.getAudioBlob();
 		if (!blob) return;
 
-		const filename = `tts-${displayVoice.toLowerCase()}-${speed.toFixed(1)}x.mp3`;
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
+		const ext = blob.type === 'audio/wav' ? '.wav' : '.mp3';
+		const filename = `tts-${displayVoice.toLowerCase()}-${speed.toFixed(1)}x${ext}`;
+		await playerStore.downloadAudio(blob, filename);
 	}
 
 	function playQueueItem(index) {
@@ -286,7 +267,7 @@
 {/if}
 
 {#if isVisible}
-	<div class="fixed bottom-[72px] md:bottom-0 left-0 md:left-64 right-0 z-30 bg-[#0d1117]/95 backdrop-blur-md border-t border-white/5">
+	<div class="fixed bottom-[72px] md:bottom-0 left-0 md:left-64 right-0 z-30 bg-[#0d1117]/95 backdrop-blur-md border-t border-white/5" style="touch-action: manipulation">
 		{#if isError}
 			<div class="px-4 py-3 flex items-center gap-3">
 				<div class="w-8 h-8 bg-red-500/10 rounded-lg flex items-center justify-center">
@@ -357,10 +338,11 @@
 						{displayVoice}
 					</span>
 					<!-- Playback Speed Dropdown -->
-					<div class="relative">
+					<div class="relative" style="touch-action: manipulation">
 						<button
 							onclick={() => showSpeedMenu = !showSpeedMenu}
-							class="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 px-2 py-1 rounded-full font-mono transition-colors"
+							class="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 px-2 py-1.5 rounded-full font-mono transition-colors select-none min-w-[44px] min-h-[44px] justify-center"
+							style="touch-action: manipulation"
 							title="Playback speed"
 						>
 							<Gauge size={12} />
@@ -371,7 +353,8 @@
 								{#each playbackRates as rate}
 									<button
 										onclick={() => setPlaybackRate(rate)}
-										class="w-full px-3 py-1.5 text-left text-xs font-mono transition-colors {playbackRate === rate ? 'text-blue-400 bg-blue-500/10' : 'text-slate-300 hover:bg-white/5'}"
+										class="w-full px-3 py-2.5 text-left text-xs font-mono transition-colors select-none {playbackRate === rate ? 'text-blue-400 bg-blue-500/10' : 'text-slate-300 hover:bg-white/5'}"
+										style="touch-action: manipulation"
 									>
 										{rate}x
 									</button>
@@ -400,7 +383,7 @@
 					onclick={downloadCurrentAudio}
 					disabled={isGenerating}
 					class="p-2 text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
-					title="Download MP3"
+					title="Download audio"
 				>
 					<Download size={14} />
 				</button>

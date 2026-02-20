@@ -13,6 +13,10 @@
 	let voices = $state([]);
 	let selectedLang = $state('');
 	let activeEngine = $state('');
+	let showSpeedPicker = $state(false);
+	const isAndroid = typeof window !== 'undefined' && !!window.Android;
+
+	const speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
 	// Group voices by language
 	const languages = $derived(() => {
@@ -51,26 +55,9 @@
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
 	const isBusy = $derived(isGenerating || isUploading);
 
-	// Speed slider mapping: 1.0x at center (50%)
-	// Position 0-50: 0.5x to 1.0x, Position 50-100: 1.0x to 2.0x
-	function speedToSlider(speed) {
-		if (speed <= 1.0) {
-			return (speed - 0.5) * 100; // 0.5→0, 1.0→50
-		} else {
-			return 50 + (speed - 1.0) * 50; // 1.0→50, 2.0→100
-		}
-	}
-
-	function sliderToSpeed(position) {
-		if (position <= 50) {
-			return 0.5 + (position / 100); // 0→0.5, 50→1.0
-		} else {
-			return 1.0 + ((position - 50) / 50); // 50→1.0, 100→2.0
-		}
-	}
-
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
+		showSpeedPicker = false;
 
 		const historyId = historyStore.add({
 			text: text.trim(),
@@ -166,8 +153,8 @@
 		<!-- Spacer -->
 		<div class="flex-1"></div>
 
-		<!-- Engine + Language + Voice + Speed (inline) -->
-		<div class="flex items-center gap-2">
+		<!-- Engine + Language + Voice + Speed (inline, wraps on mobile) -->
+		<div class="flex items-center gap-2 flex-wrap">
 			{#if activeEngine}
 				<span class="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-2 py-2 font-medium whitespace-nowrap">
 					<Cpu size={11} class="text-blue-400" />
@@ -213,19 +200,31 @@
 				</div>
 			{/if}
 
-			<div class="flex items-center gap-2 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2">
-				<Clock size={12} class="text-slate-500" />
-				<input
-					type="range"
-					min="0"
-					max="100"
-					step="1"
-					value={speedToSlider($settingsStore.defaultSpeed)}
-					oninput={(e) => settingsStore.update('defaultSpeed', Math.round(sliderToSpeed(parseFloat(e.target.value)) * 10) / 10)}
+			<!-- Speed selector (tap-based, not a slider — prevents accidental drag changes on mobile) -->
+			<div class="relative" style="touch-action: manipulation">
+				<button
+					onclick={() => showSpeedPicker = !showSpeedPicker}
 					disabled={isBusy}
-					class="w-16 h-1 accent-blue-500"
-				/>
-				<span class="text-xs font-mono text-slate-300 w-8">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
+					class="flex items-center gap-1.5 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono transition-colors hover:bg-slate-900/80 disabled:opacity-50 min-h-[36px] select-none"
+					style="touch-action: manipulation"
+				>
+					<Clock size={12} class="text-slate-500" />
+					<span class="text-slate-300">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
+					<ChevronDown size={10} class="text-slate-500" />
+				</button>
+				{#if showSpeedPicker}
+					<div class="absolute bottom-full mb-1 right-0 bg-slate-800 border border-white/10 rounded-lg shadow-xl py-1 min-w-[80px] z-50">
+						{#each speedPresets as s}
+							<button
+								onclick={() => { settingsStore.update('defaultSpeed', s); showSpeedPicker = false; }}
+								class="w-full px-3 py-2.5 text-left text-xs font-mono transition-colors select-none {$settingsStore.defaultSpeed === s ? 'text-blue-400 bg-blue-500/10' : 'text-slate-300 hover:bg-white/5'}"
+								style="touch-action: manipulation"
+							>
+								{s.toFixed(1)}x
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		</div>
 
@@ -246,6 +245,6 @@
 	</div>
 
 	<p class="text-[10px] text-slate-600 px-1">
-		Supports PDF, DOCX, and TXT files up to 100MB. Press Ctrl+Enter to generate.
+		{isAndroid ? 'Supports PDF, DOCX, and TXT files.' : 'Supports PDF, DOCX, and TXT files up to 100MB. Press Ctrl+Enter to generate.'}
 	</p>
 </div>

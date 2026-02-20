@@ -118,8 +118,6 @@ All formats go through Markdown-to-plain-text conversion, then the standard text
 - CORS enabled (required for Android WebView cross-origin requests)
 - One `python run.py` command
 
-See [MIGRATION.md](MIGRATION.md) for the full migration rationale.
-
 ### Why no authentication?
 
 This is a personal, local tool:
@@ -132,7 +130,7 @@ If exposed on a network, access control should happen at the network/proxy level
 
 ### Why CORS?
 
-The Android app (via Capacitor) loads the SvelteKit UI in a WebView. The WebView's origin differs from the server's origin, so cross-origin requests would be blocked without CORS. Since this is a local-only app with no auth, wildcard CORS (`allow_origins=["*"]`) is appropriate.
+When accessed from other devices on the local network, cross-origin requests would be blocked without CORS. Since this is a local-only app with no auth, wildcard CORS (`allow_origins=["*"]`) is appropriate.
 
 ## Performance Characteristics
 
@@ -171,40 +169,33 @@ The Dockerfile is a multi-stage build:
 
 Vite proxies `/api/*` requests to the Python server.
 
-## Android Support (Capacitor)
+## Android Support (WebView + Native TTS Bridge)
 
-The app runs on Android via **Capacitor** — the same SvelteKit build wrapped in a native Android WebView. No separate codebase.
+The app runs on Android using the **same SvelteKit web app** in a WebView, backed by an embedded NanoHTTPD server that bridges API calls to the on-device Sherpa-ONNX TTS engine.
 
 ```
-┌──────────────────────┐         ┌──────────────────────┐
-│  Android Phone       │  WiFi   │  Your Computer       │
-│                      │         │                      │
-│  Capacitor WebView   │◄───────►│  python run.py       │
-│  (SvelteKit SPA)     │  HTTP   │  (FastAPI + Kokoro)  │
-│                      │         │  port 8000           │
-└──────────────────────┘         └──────────────────────┘
+Desktop:  Browser → http://localhost:8000 → FastAPI (Python) → Kokoro TTS
+Android:  WebView → http://localhost:8080 → NanoHTTPD (Kotlin) → Sherpa-ONNX TTS
 ```
 
-### Why Capacitor?
+Both platforms use the **identical SvelteKit frontend**. The only difference is the backend.
 
-- **One codebase**: Change the web app, rebuild, same changes on Android
-- **WebView-native**: Uses the device's built-in Chrome engine
-- **No React Native / Flutter**: No second UI framework to maintain
-- **Industry standard**: Used by Ionic, widely adopted
+### Key Architecture
 
-### Key Configuration
-
-- **Configurable API base URL**: `api.js` reads `serverUrl` from localStorage. Empty = relative URLs (web). Set = absolute URLs (Android connecting to server over WiFi)
-- **CORS middleware**: Server allows `*` origins so the WebView can make cross-origin requests
-- **Mixed content**: `allowMixedContent: true` in Capacitor config — HTTPS-origin WebView making HTTP API calls to the local server
-- **Cleartext traffic**: `usesCleartextTraffic="true"` in AndroidManifest — allows HTTP connections
+- **WebView** loads the SvelteKit build from an embedded HTTP server
+- **NanoHTTPD** serves static files + API endpoints on `127.0.0.1:8080`
+- **Sherpa-ONNX** for on-device TTS inference via JNI
+- **AacEncoder** — hardware-accelerated AAC encoding via MediaCodec (ADTS framing)
+- **TtsService** foreground notification to keep process alive during generation
+- **Model download** on first launch (~95 MB Kokoro INT8)
 
 ### Build Workflow
 
 ```bash
-cd client
-npm run build:android    # vite build + cap sync android
-# Open client/android/ in Android Studio → Run
+# 1. Bundle web app into Android assets:
+./android/copy-webapp.sh
+
+# 2. Open android/ in Android Studio → Run
 ```
 
-See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for the full setup guide.
+See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) for full details.

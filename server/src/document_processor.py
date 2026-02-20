@@ -126,7 +126,7 @@ class DocumentProcessor:
         Returns:
             File contents
         """
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             text = f.read()
         logger.debug(f"TXT file: {len(text)} chars, {text.count(chr(10))} newlines")
         return text

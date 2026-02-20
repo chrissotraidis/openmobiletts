@@ -147,26 +147,51 @@
 					}
 				}
 
-				blob = new Blob(audioChunks, { type: 'audio/mpeg' });
+				// Handle any remaining buffered audio data
+				if (pendingAudioBytes > 0 && buffer.length >= pendingAudioBytes) {
+					audioChunks.push(buffer.slice(0, pendingAudioBytes));
+				}
+
+				// Detect audio type from first chunk header
+				let audioType = 'audio/mpeg';
+				if (audioChunks.length > 0 && audioChunks[0].length >= 2) {
+					const h = audioChunks[0];
+					if (h.length >= 4 && h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46) {
+						audioType = 'audio/wav';
+					} else if (h[0] === 0xFF && (h[1] & 0xF6) === 0xF0) {
+						audioType = 'audio/aac';
+					}
+				}
+				// WAV chunks each have a 44-byte header and need proper merging;
+				// AAC ADTS and MP3 are directly concatenatable.
+				if (audioType === 'audio/wav' && audioChunks.length > 1) {
+					let totalPcmSize = 0;
+					for (const c of audioChunks) totalPcmSize += c.length - 44;
+					const merged = new Uint8Array(44 + totalPcmSize);
+					merged.set(audioChunks[0].subarray(0, 44));
+					const fileSize = 36 + totalPcmSize;
+					merged[4] = fileSize & 0xff; merged[5] = (fileSize >> 8) & 0xff;
+					merged[6] = (fileSize >> 16) & 0xff; merged[7] = (fileSize >> 24) & 0xff;
+					merged[40] = totalPcmSize & 0xff; merged[41] = (totalPcmSize >> 8) & 0xff;
+					merged[42] = (totalPcmSize >> 16) & 0xff; merged[43] = (totalPcmSize >> 24) & 0xff;
+					let off = 44;
+					for (const c of audioChunks) { const pcm = c.subarray(44); merged.set(pcm, off); off += pcm.length; }
+					blob = new Blob([merged], { type: 'audio/wav' });
+				} else {
+					blob = new Blob(audioChunks, { type: audioType });
+				}
 
 				// Cache for future use
 				await cacheAudio(entry.id, blob, timingData);
 			}
 
-			// Trigger download
+			// Trigger download (uses native bridge on Android, blob URL on desktop)
 			const date = new Date(entry.createdAt).toISOString().slice(0, 10);
 			const voice = voiceDisplayNames[entry.voice] || entry.voice;
-			const filename = `tts-${date}-${voice.toLowerCase()}-${entry.speed?.toFixed(1) || '1.0'}x.mp3`;
+			const ext = blob.type === 'audio/wav' ? 'wav' : blob.type === 'audio/aac' ? 'aac' : 'mp3';
+			const filename = `tts-${date}-${voice.toLowerCase()}-${entry.speed?.toFixed(1) || '1.0'}x.${ext}`;
 
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			// Delay URL revocation to ensure browser has time to start download
-			setTimeout(() => URL.revokeObjectURL(url), 1000);
+			await playerStore.downloadAudio(blob, filename);
 		} catch (err) {
 			console.error('Download failed:', err);
 		} finally {
@@ -324,17 +349,8 @@
 			</button>
 		</div>
 
-		<!-- Text Display with synchronized highlighting -->
+		<!-- Text Display with synchronized highlighting and click-to-seek -->
 		<TextDisplay />
-
-		<!-- Full original text (fallback if TextDisplay has no segments yet) -->
-		<div class="p-5 bg-slate-900/40 border border-white/5 rounded-2xl">
-			<div class="flex items-center gap-2 mb-4">
-				<BookOpen size={16} class="text-blue-400" />
-				<h3 class="text-sm font-semibold text-slate-400">Full Text</h3>
-			</div>
-			<p class="text-[15px] leading-relaxed text-slate-300 whitespace-pre-wrap">{viewingEntry.text}</p>
-		</div>
 	</div>
 {:else if history.length === 0}
 	<div class="flex flex-col items-center justify-center py-20 text-center">
@@ -420,7 +436,7 @@
 						onclick={() => downloadEntry(entry)}
 						disabled={downloadingEntryIds.has(entry.id)}
 						class="p-1.5 text-slate-700 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-100 disabled:text-blue-400"
-						title="Download MP3"
+						title="Download audio"
 					>
 						{#if downloadingEntryIds.has(entry.id)}
 							<Loader2 size={14} class="animate-spin" />

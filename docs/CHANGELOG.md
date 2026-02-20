@@ -2,29 +2,80 @@
 
 ---
 
-## 2026-02-18 — v1.0.0: Android Support via Capacitor
+## 2026-02-20 — v2.0.1: Comprehensive Bug Fixes and Hardening
 
-Added Android support by wrapping the existing SvelteKit web app in a native Android shell using Capacitor. Bumped version from 0.2.0 to 1.0.0.
+Comprehensive code review across all three components (Android, client, server) identified and fixed 40+ issues including race conditions, resource leaks, thread safety bugs, and security vulnerabilities.
+
+### Android Fixes
+
+**Critical:**
+- `TtsManager.kt` — Replaced `@Synchronized` (deadlock on suspend) with coroutine `Mutex`; added `@Volatile` on `tts` field
+- `AacEncoder.kt` — Fixed MediaCodec leak: moved `configure()`/`start()` inside `try` so `finally` always releases; added `INFO_OUTPUT_FORMAT_CHANGED` handler
+- `ModelDownloader.kt` — Added Zip Slip protection (canonical path check); moved connection disconnect to `finally` block
+- `MainActivity.kt` — Moved `saveAudioFile` disk I/O to background thread (was blocking JavaBridge)
+
+**High:**
+- `TtsService.kt` — Added `@Volatile` on `instance`; API-version-guarded `stopForeground`
+- `AppLog.kt` — Fixed thread-unsafe `SimpleDateFormat` with `ThreadLocal`
+- `TtsHttpServer.kt` — Added `cancelled` check in QueueInputStream read loop; capped request body at 1 MB
+- `VoiceRegistry.kt` — Replaced manual JSON string building with `JSONArray`/`JSONObject`
+
+### Client Fixes
+
+**Critical:**
+- `player.js` — Fixed blob URL leak on error (added `revokeObjectURL` + null refs in catch block)
+- `audioCache.js` — Fixed `initDB` concurrency with promise caching; `removeCachedAudio`/`clearAudioCache`/`cleanupCache` now properly await transactions via `oncomplete`/`onerror`
+
+**High:**
+- `AudioHistory.svelte` — Fixed download to use native Android bridge (`playerStore.downloadAudio`); added post-loop buffer flush for last audio chunk
+- `history.js` — Fixed ID collision with monotonic counter (`Date.now() * 1000 + counter`)
+- `+page.svelte` — Log export uses native bridge download; speed slider has `touch-action: manipulation`
+
+### Server Fixes
+
+**Critical:**
+- `main.py` — Fixed concurrent upload filename collision (UUID prefix); null filename validation; extension validation before disk write; broader exception handling (`ValueError`, `RuntimeError`, `OSError`); version corrected to `2.0.0`
+
+**High:**
+- `tts_engine.py` / `sherpa_backend.py` — Fixed falsy bug: `speed or default` treats `0.0` as falsy; replaced with `is not None` checks
+- `document_processor.py` — Added `errors='replace'` for UTF-8 text file reading
+- `text_preprocessor.py` — Fixed zero-token estimation for short sentences (`max(1, ...)`)
+
+---
+
+## 2026-02-19 — v2.0.0: Android WebView + Native TTS Bridge + Cleanup
+
+Replaced Capacitor WebView wrapper with a native Android app that loads the SvelteKit web app in a WebView, backed by an embedded NanoHTTPD server bridging to on-device Sherpa-ONNX TTS. Removed all Capacitor dependencies and old Compose UI.
 
 **Added:**
-- Capacitor integration (`@capacitor/core`, `@capacitor/cli`, `@capacitor/android`)
-- `client/android/` project — open in Android Studio to build and run
+- `android/` — WebView-based Android app with embedded HTTP server
+- NanoHTTPD server: serves SvelteKit static build + API endpoints on localhost:8080
+- Sherpa-ONNX TTS engine with Kokoro INT8 model (~95 MB) for on-device inference
+- VoiceRegistry (53 voices), WavEncoder (PCM to WAV), TtsHttpServer
+- TtsService foreground notification for keep-alive during generation
+- Model download on first launch with progress UI
+- `android/copy-webapp.sh` build script + Gradle `bundleWebApp` task
+- `docs/ANDROID_ARCHITECTURE.md` — WebView architecture documentation
+
+**Removed:**
+- Jetpack Compose UI (19 files: data/, viewmodel/, ui/ directories)
+- Compose dependencies from build.gradle.kts
+- `client/android/` — Capacitor WebView wrapper
 - `client/capacitor.config.ts` — Capacitor configuration
-- `npm run build:android` script — builds web assets and syncs to Android project
-- Configurable server URL in Settings (for Android to connect to server over WiFi)
+- Capacitor dependencies (`@capacitor/core`, `@capacitor/cli`, `@capacitor/android`)
+- `docs/ANDROID_APP_GUIDE.md`, `docs/OFFLINE_TTS_FEASIBILITY.md`, `docs/MIGRATION.md`
+
+---
+
+## 2026-02-18 — v1.0.0: Android Support
+
+Added Android support with configurable server URL and CORS middleware.
+
+**Added:**
+- Configurable server URL in Settings (for remote clients)
 - Test Connection button with 5-second timeout and status feedback
-- CORS middleware on FastAPI (`allow_origins=["*"]`) for cross-origin WebView requests
+- CORS middleware on FastAPI (`allow_origins=["*"]`) for cross-origin requests
 - `apiUrl()` helper in `api.js` — all fetch calls route through configurable base URL
-- `serverUrl` setting in localStorage (preserved across settings reset)
-
-**Changed:**
-- All 6 fetch call sites now use `apiUrl()` instead of relative URLs
-- Settings reset preserves server URL to avoid breaking Android connections
-- `api.js` reads server URL directly from localStorage (avoids circular store dependency)
-
-**Docs:**
-- New: `ANDROID_APP_GUIDE.md` — full Android setup and usage guide
-- Updated all existing docs to reflect CORS, Android support, and configurable URLs
 
 ---
 
@@ -36,7 +87,7 @@ Updated all documentation to reflect the monolithic architecture (v0.2). Removed
 
 ## 2026-02 — Monolithic Migration (v0.2)
 
-Redesigned from a two-process client-server architecture to a single-process monolithic app. See [MIGRATION.md](MIGRATION.md) for full details.
+Redesigned from a two-process client-server architecture to a single-process monolithic app. Redesigned from two-process client-server to single-process monolithic app.
 
 **Removed:**
 - JWT authentication (no login, no passwords)

@@ -67,10 +67,8 @@ cd client && npm install && npm run dev
 
 ### Build for Android
 ```bash
-cd client
-npm run build:android    # Builds web assets + syncs to Android project
-# Open client/android/ in Android Studio → Run on device
-# In app: Settings → Server Connection → enter http://<your-ip>:8000
+./android/copy-webapp.sh    # Builds SvelteKit + copies to Android assets
+# Open android/ in Android Studio → Build → Run on device
 ```
 
 ### Check Model
@@ -117,9 +115,8 @@ openmobiletts/
 ├── client/               SvelteKit UI
 │   ├── src/routes/       Pages (single root page)
 │   ├── src/lib/          Components, stores, services
-│   ├── capacitor.config.ts  Capacitor config (Android)
-│   ├── android/          Android project (for Android Studio)
 │   └── static/           PWA assets
+├── android/              Android app (WebView + Sherpa-ONNX)
 └── docs/                 Documentation
 ```
 
@@ -162,4 +159,4 @@ python run.py
 | Technical architecture? | [technical-architecture.md](technical-architecture.md) |
 | What's implemented? | [implementation-status.md](implementation-status.md) |
 | How are tests doing? | [testing-summary.md](testing-summary.md) |
-| Run on Android? | [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) |
+| Run on Android? | [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) |

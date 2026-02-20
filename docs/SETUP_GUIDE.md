@@ -40,29 +40,24 @@ That's it. `run.py` will:
 
 ## Alternative: Android
 
-Run the same app on your Android phone. The server stays on your computer; the phone connects over WiFi.
+Run the same web app on your Android phone with on-device TTS — no server or WiFi needed.
 
 ### Prerequisites
 - Android Studio (latest stable)
-- Android device or emulator (API 22+)
-- Both devices on the same WiFi network
+- Android device or emulator (API 26+)
+- Node.js (for building the web app)
 
 ### Setup
 ```bash
-# 1. Start the server on your computer
-python run.py
+# 1. Bundle the SvelteKit web app into Android assets
+./android/copy-webapp.sh
 
-# 2. Build the Android project
-cd client
-npm run build:android
-
-# 3. Open client/android/ in Android Studio → Run on your device
-
-# 4. In the Android app: Settings → Server Connection
-#    Enter http://<your-computer-ip>:8000 → Test Connection
+# 2. Open android/ in Android Studio → Build → Run on device
 ```
 
-See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for full details.
+On first launch, the app downloads the Kokoro TTS model (~95 MB). After that, everything runs offline.
+
+See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) for full details.
 
 ## Alternative: Docker
 

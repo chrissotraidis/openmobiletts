@@ -7,6 +7,7 @@
 	import AudioHistory from '$lib/components/AudioHistory.svelte';
 	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
+	import { playerStore } from '$lib/stores/player';
 	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine } from '$lib/services/api';
 	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2, Wifi, CheckCircle, XCircle, Cpu } from 'lucide-svelte';
 
@@ -91,15 +92,8 @@
 
 			const data = await response.json();
 			const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-			const url = URL.createObjectURL(blob);
-
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = `openmobiletts-logs-${new Date().toISOString().slice(0, 10)}.json`;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-			setTimeout(() => URL.revokeObjectURL(url), 1000);
+			const filename = `openmobiletts-logs-${new Date().toISOString().slice(0, 10)}.json`;
+			await playerStore.downloadAudio(blob, filename);
 		} catch (err) {
 			console.error('Failed to export logs:', err);
 			alert('Failed to export logs: ' + err.message);
@@ -227,7 +221,7 @@
 		</header>
 
 		<!-- SCROLLABLE VIEW -->
-		<div class="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
+		<div class="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 custom-scrollbar">
 			{#if activeTab === 'generate'}
 				<div class="max-w-4xl mx-auto space-y-6 md:space-y-8">
 					<TextInput />
@@ -333,7 +327,7 @@
 								</div>
 								<span class="text-xs font-mono text-blue-400">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
 							</div>
-							<div class="py-3">
+							<div class="py-3" style="touch-action: manipulation">
 								<input
 									type="range"
 									min="0"
@@ -342,6 +336,7 @@
 									value={speedToSlider($settingsStore.defaultSpeed)}
 									oninput={(e) => settingsStore.update('defaultSpeed', Math.round(sliderToSpeed(parseFloat(e.target.value)) * 10) / 10)}
 									class="w-full h-2 accent-blue-500 cursor-pointer"
+									style="touch-action: manipulation"
 								/>
 							</div>
 							<div class="flex text-[10px] text-slate-600">
