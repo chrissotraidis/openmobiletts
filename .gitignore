@@ -97,7 +97,7 @@ models/
 logs/
 *.log
 
-# Android / Capacitor build artifacts
+# Android build artifacts
 .gradle/
 *.apk
 *.aab
@@ -110,6 +110,7 @@ android/build/
 android/local.properties
 android/app/libs/*.aar
 android/app/src/main/jniLibs/
+android/app/src/main/assets/webapp/
 
 # OS
 .DS_Store

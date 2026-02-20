@@ -1,6 +1,6 @@
 # Open Mobile TTS - Implementation Status
 
-**Last Updated**: 2026-02-18
+**Last Updated**: 2026-02-20
 **Status**: ✅ Fully functional monolithic app — server, client, and Android support complete
 
 ---
@@ -97,29 +97,18 @@ No authentication. No separate processes. CORS enabled for Android WebView suppo
 
 ---
 
-## ✅ Completed: Android (Capacitor)
+## ✅ Completed: Android App (WebView + Native TTS)
 
-The app runs on Android via **Capacitor** — the same SvelteKit web app wrapped in a native Android shell. See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for full details.
+The app runs on Android using the **same SvelteKit web app** in a WebView, backed by an embedded NanoHTTPD server that calls the on-device Sherpa-ONNX TTS engine.
 
-- **Capacitor WebView** loads the built SvelteKit SPA
-- **Configurable server URL** connects to the Python server over WiFi
-- **Test Connection** button verifies server connectivity with 5-second timeout
-- **CORS middleware** on the server allows cross-origin requests from the WebView
-- **Mixed content** enabled for HTTPS-origin WebView making HTTP API calls
-- Build with `npm run build:android` → open `client/android/` in Android Studio
+- **WebView** loads the SvelteKit build — identical UI to desktop
+- **NanoHTTPD** embedded HTTP server: API endpoints + static file serving
+- **Sherpa-ONNX** TTS engine with Kokoro INT8 model (~95 MB)
+- **Foreground service** notification to keep process alive during generation
+- **Model download** on first launch
+- Run `./android/copy-webapp.sh` then open `android/` in Android Studio
 
----
-
-## 📋 Future: Native On-Device TTS
-
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for a potential native app with on-device inference:
-
-- **Sherpa-ONNX** for on-device TTS inference
-- **Kokoro INT8** model (~100 MB)
-- **Jetpack Compose** UI
-- **AudioTrack** for streaming playback
-
-See also [OFFLINE_TTS_FEASIBILITY.md](OFFLINE_TTS_FEASIBILITY.md) for feasibility analysis.
+See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) for full details.
 
 ---
 
@@ -149,10 +138,21 @@ openmobiletts/
 │   │   ├── lib/stores/             State management
 │   │   └── lib/services/           API client (configurable base URL)
 │   ├── static/                     PWA manifest
-│   ├── capacitor.config.ts         Capacitor config (Android)
-│   ├── android/                    Android project (Capacitor-generated)
 │   ├── package.json                Node dependencies
 │   └── svelte.config.js            SvelteKit config
+├── android/
+│   ├── copy-webapp.sh              Bundles SvelteKit build into assets
+│   └── app/src/main/java/com/openmobiletts/app/
+│       ├── MainActivity.kt         WebView host + model download UI
+│       ├── TtsHttpServer.kt        NanoHTTPD: API + static files
+│       ├── TtsManager.kt           Sherpa-ONNX wrapper (Mutex-safe init)
+│       ├── AacEncoder.kt           PCM → AAC audio (hardware MediaCodec)
+│       ├── WavEncoder.kt           PCM → WAV conversion (fallback)
+│       ├── VoiceRegistry.kt        Voice name → SID mapping
+│       ├── ModelDownloader.kt      First-launch model download (Zip Slip protected)
+│       ├── TtsService.kt           Foreground notification
+│       ├── AppLog.kt               In-app log ring buffer
+│       └── OpenMobileTtsApp.kt     Application singleton
 ├── docs/                           Documentation
 └── .github/workflows/              CI/CD
 ```

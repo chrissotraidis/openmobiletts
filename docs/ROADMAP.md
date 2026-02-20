@@ -4,87 +4,47 @@
 
 | Version | Android | Desktop | Status |
 |---------|---------|---------|--------|
-| **v1.0** | Capacitor WebView (connects to server over WiFi) | SvelteKit + FastAPI + Kokoro (PyTorch) | **Current** |
-| **v2.0** | Native Kotlin app with on-device Sherpa-ONNX TTS | SvelteKit + FastAPI + choice of Kokoro (PyTorch) or Sherpa-ONNX | Planned |
+| **v2.0** | WebView + NanoHTTPD + on-device Sherpa-ONNX TTS | SvelteKit + FastAPI + choice of Kokoro (PyTorch) or Sherpa-ONNX | **Current** |
 
 ---
 
-## v1.0 — Capacitor Android + Server (Current)
-
-### Architecture
-
-```
-Desktop:
-  Browser ──localhost──► python run.py (FastAPI + Kokoro + SvelteKit UI)
-  One process. One port. No network.
-
-Android:
-  Phone (Capacitor WebView) ──WiFi──► Computer (python run.py)
-  Phone is a thin client. Server does all TTS work.
-```
-
-### What's Included
-
-- **Desktop web app**: `python run.py` → everything at localhost:8000
-- **Android app**: Same SvelteKit UI in a Capacitor WebView shell
-- **Configurable server URL**: Settings > Server Connection > enter computer IP
-- **CORS middleware**: Allows cross-origin requests from Android WebView
-- **All existing features**: Text input, document upload, 11 voices, streaming playback, history, text highlighting
-
-### Limitations
-
-- Android app requires a computer running the server on the same WiFi
-- TTS model (Kokoro, 320MB PyTorch) cannot run on the phone
-- Not a standalone mobile app — it's a remote client
-
-### Files
-
-```
-server/                    FastAPI + Kokoro TTS (runs on computer)
-client/                    SvelteKit UI
-client/capacitor.config.ts Capacitor configuration
-client/android/            Android project (open in Android Studio)
-```
-
----
-
-## v2.0 — Native On-Device Android + Desktop Preserved
+## v2.0 — Android WebView + Desktop Dual-Engine
 
 ### Goals
 
-1. **Android**: Standalone native app with on-device TTS. No server, no WiFi, no computer.
-2. **Desktop**: Add Sherpa-ONNX as an alternative TTS engine alongside the original PyTorch Kokoro. Users choose which backend to use.
+1. **Android**: Load the same SvelteKit web app in a WebView, with an embedded HTTP server bridging to on-device Sherpa-ONNX TTS. Zero UI duplication.
+2. **Desktop**: Sherpa-ONNX available as an alternative TTS engine alongside the original PyTorch Kokoro. Users choose which backend to use.
 
 ### Architecture
 
 ```
 Desktop (v2 — dual engine):
-  Browser ──localhost──► python run.py (FastAPI + SvelteKit UI)
-                              │
-                              ├── Engine: Kokoro (PyTorch)  ← original, best GPU perf
-                              └── Engine: Sherpa-ONNX       ← lighter deps, same quality
+  Browser ──localhost:8000──► python run.py (FastAPI + SvelteKit UI)
+                                    │
+                                    ├── Engine: Kokoro (PyTorch)  ← original, best GPU perf
+                                    └── Engine: Sherpa-ONNX       ← lighter deps, same quality
 
-Android (v2 — fully standalone):
+Android (v2 — WebView + native TTS bridge):
   ┌─────────────────────────────────────────┐
-  │          Native Kotlin App              │
+  │          Android Phone                  │
   │                                         │
-  │  Jetpack Compose UI                     │
-  │  ├── Generate Screen                    │
-  │  ├── History Screen                     │
-  │  └── Settings Screen                    │
+  │  WebView → http://localhost:8080        │
+  │  NanoHTTPD (static files + API)         │
+  │  Sherpa-ONNX TTS Engine (JNI)          │
+  │  Kokoro INT8 model (~95 MB)            │
   │                                         │
-  │  Sherpa-ONNX TTS Engine                 │
-  │  ├── Kokoro INT8 model (~95 MB)         │
-  │  ├── espeak-ng phonemizer (bundled)     │
-  │  └── JNI native libs (~15 MB)           │
-  │                                         │
-  │  Text Preprocessor (ported from Python) │
-  │  Document Processor (PDF/DOCX/TXT)      │
-  │  AudioTrack streaming playback          │
-  │  Room DB for history                    │
+  │  Same SvelteKit UI as desktop.          │
+  │  No external network. Fully offline.    │
   └─────────────────────────────────────────┘
-  No network. No server. Everything on-device.
 ```
+
+### Why WebView (not Compose)?
+
+The SvelteKit web app is already mobile-first with responsive layouts and 44x44px touch targets. Loading it in a WebView means:
+
+- **Zero UI duplication** — one codebase for all platforms
+- **Automatic feature parity** — every web UI change works on Android immediately
+- **8 Kotlin files** instead of 24 — only native TTS engine + HTTP server bridge
 
 ### Desktop Dual-Engine Design
 
@@ -100,165 +60,49 @@ Both engines produce the same quality audio from the same Kokoro model — they 
 | **Install size** | ~400 MB (PyTorch + deps) | ~50 MB (much lighter) |
 | **Best for** | Users with NVIDIA GPU | Users who want minimal deps |
 
-**Implementation**: The `tts_engine.py` module gets an engine abstraction. A setting (env var or UI toggle) selects which backend to use. Both implement the same interface: `generate(text, voice, speed) → audio chunks`.
-
-```python
-# tts_engine.py — v2 concept
-class TTSEngine:
-    def __init__(self, engine="kokoro"):  # or "sherpa-onnx"
-        if engine == "sherpa-onnx":
-            self.backend = SherpaOnnxBackend()
-        else:
-            self.backend = KokoroBackend()  # current implementation
-```
-
-The rest of the server (FastAPI, streaming protocol, text preprocessing, document processing) stays the same regardless of which engine is selected.
-
-### What Changes from v1
-
-| Component | v1 | v2 |
-|-----------|----|----|
-| Android app | Capacitor WebView (thin client) | Native Kotlin (standalone) |
-| TTS on Android | Server (PyTorch, runs on computer) | On-device (Sherpa-ONNX INT8) |
-| Android network | Required (WiFi to server) | Not required |
-| Desktop web app | SvelteKit + FastAPI | Same architecture, kept for computer users |
-| Desktop TTS engine | Kokoro (PyTorch) only | Choice of Kokoro (PyTorch) **or** Sherpa-ONNX |
-| `server/src/tts_engine.py` | Single PyTorch backend | Engine abstraction with pluggable backends |
-| `client/android/` (Capacitor) | Active | Removed — replaced by native app |
-| `android/` (native) | Does not exist | New top-level directory |
-
-### What Gets Kept
-
-- `server/` — Desktop users still use the web app
-- `client/` — SvelteKit UI for desktop (Capacitor no longer needed)
-- `docs/` — Updated for both platforms
-- `run.py`, `Dockerfile`, `docker-compose.yml` — Desktop deployment
-
-### What Gets Removed
-
-- `client/android/` — Capacitor Android project (replaced by native)
-- `client/capacitor.config.ts` — No longer needed
-- Capacitor dependencies from `client/package.json`
-
-### What Gets Added
+### Android Project Structure
 
 ```
-android/                              New top-level native Android project
+android/
+├── copy-webapp.sh                    Bundles SvelteKit build into assets
 ├── app/src/main/
 │   ├── java/com/openmobiletts/app/
-│   │   ├── MainActivity.kt
-│   │   ├── tts/
-│   │   │   ├── TtsManager.kt        Sherpa-ONNX wrapper
-│   │   │   └── TtsChunker.kt        Text → chunks
-│   │   ├── audio/
-│   │   │   └── AudioPlaybackManager.kt  AudioTrack streaming
-│   │   ├── document/
-│   │   │   └── DocumentProcessor.kt     PDF/DOCX/TXT
-│   │   ├── text/
-│   │   │   └── TextPreprocessor.kt      Port from Python
-│   │   ├── data/
-│   │   │   ├── AppDatabase.kt           Room DB
-│   │   │   ├── HistoryDao.kt
-│   │   │   └── SettingsRepository.kt    DataStore
-│   │   └── ui/
-│   │       ├── theme/Theme.kt
-│   │       ├── screens/
-│   │       │   ├── GenerateScreen.kt
-│   │       │   ├── HistoryScreen.kt
-│   │       │   └── SettingsScreen.kt
-│   │       └── components/
-│   │           ├── PlayerBar.kt
-│   │           ├── VoiceSelector.kt
-│   │           └── SpeedSlider.kt
-│   ├── assets/
-│   │   └── kokoro-int8/              Model files (~95 MB)
-│   │       ├── model.int8.onnx
-│   │       ├── voices.bin
-│   │       ├── tokens.txt
-│   │       └── espeak-ng-data/
-│   └── res/
-└── build.gradle.kts
+│   │   ├── MainActivity.kt          WebView host + model download UI
+│   │   ├── TtsHttpServer.kt         NanoHTTPD: API endpoints + static files
+│   │   ├── TtsManager.kt            Sherpa-ONNX wrapper (JNI)
+│   │   ├── AacEncoder.kt            PCM → AAC audio (hardware MediaCodec)
+│   │   ├── WavEncoder.kt            PCM → WAV bytes (fallback)
+│   │   ├── VoiceRegistry.kt         Voice name → SID mapping (53 voices)
+│   │   ├── ModelDownloader.kt       Downloads Kokoro model (~95 MB)
+│   │   ├── TtsService.kt            Foreground notification for keep-alive
+│   │   ├── AppLog.kt                In-app log ring buffer
+│   │   └── OpenMobileTtsApp.kt      Application singleton
+│   ├── assets/webapp/                SvelteKit build (bundled at build time)
+│   └── jniLibs/                      Sherpa-ONNX native libs
+└── app/build.gradle.kts
 ```
 
-### Tech Stack
+### Android Tech Stack
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| UI | Jetpack Compose + Material 3 | Native Android UI |
+| UI | WebView (SvelteKit) | Same web app as desktop — zero duplication |
+| HTTP server | NanoHTTPD | Serves static files + API endpoints |
 | TTS inference | Sherpa-ONNX (JNI) | Runs Kokoro INT8 on-device |
-| Phonemizer | espeak-ng (bundled native lib) | Text-to-phoneme conversion |
-| Audio | AudioTrack (MODE_STREAM) | Streaming playback |
-| Database | Room | History persistence |
-| Settings | Jetpack DataStore | User preferences |
-| PDF | Apache PDFBox Android | PDF text extraction |
-| DOCX | Apache POI | DOCX text extraction |
+| Audio format | AAC (ADTS, hardware MediaCodec) | ~6x smaller than WAV, no external libs |
+| Audio playback | WebView HTML5 Audio | Native audio element in WebView |
+| History/settings | WebView localStorage/IndexedDB | Same as desktop web app |
 
-### Expected Performance (Pixel 9 Pro)
+### Build Workflow
 
-| Metric | Value |
-|--------|-------|
-| Model size in APK | ~95 MB (INT8 ONNX + voices + espeak-ng data) |
-| Total APK size | ~130-140 MB |
-| RAM usage | ~100-300 MB at runtime |
-| Short text (1-2 sentences) | ~1-3 seconds |
-| Paragraph | ~5-8 seconds |
-| Generation speed | ~0.8x real-time (generates slightly slower than playback) |
-| First chunk delay | ~2-5 seconds, then seamless streaming |
+```bash
+# 1. Bundle web app into Android assets:
+./android/copy-webapp.sh
 
-### Implementation Phases
+# 2. Open android/ in Android Studio → Build → Run
+```
 
-#### Android (native app)
-
-| Phase | What | Depends On |
-|-------|------|------------|
-| **A1** | Project scaffolding + Sherpa-ONNX + "Hello World" audio | Nothing |
-| **A2** | Streaming AudioTrack playback engine | A1 |
-| **A3** | Text preprocessor + chunker (port from Python) | Nothing (parallel with A2) |
-| **A4** | Document processor (PDF/DOCX/TXT) | Nothing (parallel with A2-A3) |
-| **A5** | UI screens (Generate, History, Settings) | A2 |
-| **A6** | Sentence highlighting + timing sync | A2, A3, A5 |
-| **A7** | Data persistence (Room + file storage) | A5 |
-| **A8** | Polish (notifications, media controls, background audio) | A5, A6, A7 |
-| **A9** | Cleanup (remove Capacitor, update docs) | A8 |
-
-**Android critical path**: A1 → A2 → A5 → A6 → A8
-
-#### Desktop (dual engine)
-
-| Phase | What | Depends On |
-|-------|------|------------|
-| **D1** | Add Sherpa-ONNX Python backend to `tts_engine.py` | Nothing |
-| **D2** | Engine selection (env var + Settings UI toggle) | D1 |
-| **D3** | Test parity (both engines produce same output for same input) | D1 |
-
-Desktop phases can run in parallel with Android phases. D1 shares Sherpa-ONNX knowledge with A1.
-
-### Key Dependencies
-
-| Dependency | Size | License |
-|-----------|------|---------|
-| Sherpa-ONNX native libs | ~15 MB | Apache 2.0 |
-| Kokoro INT8 model + voices | ~95 MB | Apache 2.0 |
-| Jetpack Compose + Material 3 | ~5 MB | Apache 2.0 |
-| Room | ~1 MB | Apache 2.0 |
-| Apache PDFBox Android | ~3 MB | Apache 2.0 |
-| Apache POI | ~5 MB | Apache 2.0 |
-
-### Known Challenges
-
-1. **Phonemizer**: Kokoro uses Misaki (Python). Sherpa-ONNX solves this by bundling espeak-ng as a native library — non-issue if using Sherpa-ONNX.
-2. **Thermal throttling**: Long document generation keeps CPU busy. Chunk-by-chunk playback introduces natural idle periods that help.
-3. **Model bundling vs download**: Bundling in APK is simpler (~140 MB total APK). Alternative: download on first launch for smaller install.
-4. **Text preprocessing port**: 36 abbreviation regex patterns + number-to-words + Unicode normalization need porting from Python to Kotlin. Straightforward but tedious.
-
-### Reference Projects
-
-| Project | What it does |
-|---------|-------------|
-| [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx) | Pre-built Android TTS with Kokoro — the foundation |
-| [Sherpa-ONNX Android TTS Engine](https://github.com/k2-fsa/sherpa-onnx/tree/master/android/SherpaOnnxTtsEngine) | Example app to study/fork |
-| [Kokoro-82M-Android](https://github.com/puff-dayo/Kokoro-82M-Android) | Native Android demo with INT8 |
-| [expo-kokoro-onnx](https://github.com/isaiahbjork/expo-kokoro-onnx) | React Native approach (alternative) |
+See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) for full details.
 
 ---
 
@@ -374,6 +218,4 @@ v2 Core (A1-A9, D1-D3)
 
 ## Detailed Reference Docs
 
-- **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)** — Full phase-by-phase v2 implementation with code examples
-- **[OFFLINE_TTS_FEASIBILITY.md](OFFLINE_TTS_FEASIBILITY.md)** — Research: model sizes, device benchmarks, architecture options
-- **[ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md)** — v1 Capacitor Android setup and usage
+- **[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)** — Full phase-by-phase implementation with code examples

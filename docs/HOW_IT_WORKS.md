@@ -168,28 +168,36 @@ The app has no login, no passwords, no tokens. It is designed as a **local-only 
 
 ## Android Support
 
-The app also runs on Android via **Capacitor**. The same SvelteKit web app is wrapped in a native Android WebView shell that connects to your Python server over WiFi.
+The app runs on Android using the **same SvelteKit web app** in a WebView, backed by an embedded HTTP server that calls the on-device Sherpa-ONNX TTS engine. No external server needed — everything runs locally on the phone.
 
 ```
-┌──────────────────────┐         ┌──────────────────────┐
-│  Android Phone       │  WiFi   │  Your Computer       │
-│  Capacitor WebView   │◄───────►│  python run.py       │
-│  (SvelteKit SPA)     │  HTTP   │  (FastAPI + Kokoro)  │
-└──────────────────────┘         └──────────────────────┘
+┌─────────────────────────────────────────┐
+│          Android Phone                  │
+│                                         │
+│  WebView → localhost:8080               │
+│  NanoHTTPD (static files + API)         │
+│  Sherpa-ONNX TTS Engine                │
+│  Kokoro INT8 model (~95 MB)            │
+│                                         │
+│  Same SvelteKit UI as desktop.          │
+│  No external network. Fully offline.    │
+└─────────────────────────────────────────┘
 ```
 
-In the Android app, go to **Settings > Server Connection** and enter your computer's IP address (e.g., `http://192.168.1.100:8000`). See [ANDROID_APP_GUIDE.md](ANDROID_APP_GUIDE.md) for full details.
+Run `./android/copy-webapp.sh` to bundle the web app, then open `android/` in Android Studio and run on your device. On first launch it downloads the Kokoro model (~95MB).
+
+See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md) for full details.
 
 ## File Structure
 
 ```
 openmobiletts/
-├── run.py                   # Single-command launcher
+├── run.py                   # Single-command launcher (desktop)
 ├── Dockerfile               # Multi-stage Docker build
 ├── docker-compose.yml       # Docker convenience wrapper
-├── server/
+├── server/                  # Desktop web app backend
 │   ├── src/
-│   │   ├── main.py              # FastAPI app + API endpoints + CORS + static serving
+│   │   ├── main.py              # FastAPI app + API endpoints + static serving
 │   │   ├── tts_engine.py        # Kokoro TTS wrapper
 │   │   ├── text_preprocessor.py # Text normalization & chunking
 │   │   ├── audio_encoder.py     # MP3 encoding (pydub + ffmpeg)
@@ -198,15 +206,25 @@ openmobiletts/
 │   ├── tests/                   # Automated tests
 │   ├── requirements.txt         # Python dependencies
 │   └── setup_models.py          # Downloads Kokoro model
-├── client/
+├── client/                  # Web app frontend (SvelteKit) — shared by desktop + Android
 │   ├── src/
 │   │   ├── routes/+page.svelte      # Main TTS interface
 │   │   ├── lib/components/          # UI components
 │   │   ├── lib/stores/              # State management
-│   │   └── lib/services/            # API client (configurable base URL)
-│   ├── capacitor.config.ts          # Capacitor config (Android)
-│   ├── android/                     # Android project (Capacitor-generated)
+│   │   └── lib/services/            # API client
 │   └── static/                      # PWA manifest
+├── android/                 # Android app (WebView + native TTS bridge)
+│   ├── copy-webapp.sh               # Bundles SvelteKit build into assets
+│   ├── app/src/main/java/com/openmobiletts/app/
+│   │   ├── MainActivity.kt         # WebView host + model download UI
+│   │   ├── TtsHttpServer.kt        # NanoHTTPD: API endpoints + static files
+│   │   ├── TtsManager.kt           # Sherpa-ONNX wrapper
+│   │   ├── VoiceRegistry.kt        # Voice name → SID mapping
+│   │   ├── WavEncoder.kt           # PCM → WAV conversion
+│   │   ├── ModelDownloader.kt      # First-launch model download
+│   │   ├── TtsService.kt           # Foreground notification for keep-alive
+│   │   └── OpenMobileTtsApp.kt     # Application singleton
+│   └── app/build.gradle.kts
 └── docs/                            # Documentation
 ```
 
@@ -264,4 +282,4 @@ See also:
 - [Technical Architecture](technical-architecture.md) - Detailed design decisions
 - [Implementation Status](implementation-status.md) - What's built vs. planned
 - [Limits & Constraints](LIMITS_AND_CONSTRAINTS.md) - Full performance details
-- [Android App Guide](ANDROID_APP_GUIDE.md) - Running on Android via Capacitor
+- [Roadmap](ROADMAP.md) - Version plan and future features

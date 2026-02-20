@@ -80,7 +80,7 @@
 
 		<div
 			bind:this={scrollContainer}
-			class="text-[15px] leading-relaxed text-slate-300 max-h-[400px] overflow-y-auto custom-scrollbar"
+			class="text-[15px] leading-relaxed text-slate-300"
 		>
 			{#each segments as segment, segIdx}
 				{@const words = getWords(segment.text)}

@@ -9,17 +9,19 @@ const MAX_ENTRIES = 50; // Limit cache size
 const MAX_SIZE_BYTES = 200 * 1024 * 1024; // 200MB total cache size
 
 let db = null;
+let dbPromise = null;
 
 /**
- * Initialize IndexedDB connection
+ * Initialize IndexedDB connection (concurrency-safe — caches the in-flight promise)
  */
 async function initDB() {
 	if (db) return db;
+	if (dbPromise) return dbPromise;
 
-	return new Promise((resolve, reject) => {
+	dbPromise = new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-		request.onerror = () => reject(request.error);
+		request.onerror = () => { dbPromise = null; reject(request.error); };
 		request.onsuccess = () => {
 			db = request.result;
 			resolve(db);
@@ -33,6 +35,7 @@ async function initDB() {
 			}
 		};
 	});
+	return dbPromise;
 }
 
 /**
@@ -60,18 +63,27 @@ export async function cacheAudio(historyId, blob, timingData) {
 		const arrayBuffer = await blob.arrayBuffer();
 
 		const database = await initDB();
-		const transaction = database.transaction([STORE_NAME], 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
 
-		const entry = {
-			id: historyId,
-			audioData: arrayBuffer,
-			timingData: timingData,
-			size: arrayBuffer.byteLength,
-			createdAt: Date.now(),
-		};
+		// Await the write transaction fully — without this, large blobs (40MB+)
+		// can silently fail to persist, leaving nothing to read from history.
+		await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readwrite');
+			const store = transaction.objectStore(STORE_NAME);
 
-		store.put(entry);
+			const entry = {
+				id: historyId,
+				audioData: arrayBuffer,
+				mimeType: blob.type || 'audio/mpeg',
+				timingData: timingData,
+				size: arrayBuffer.byteLength,
+				createdAt: Date.now(),
+			};
+
+			store.put(entry);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+			transaction.onabort = () => reject(transaction.error || new Error('Transaction aborted'));
+		});
 
 		// Cleanup old entries to stay within limits
 		await cleanupCache();
@@ -98,8 +110,9 @@ export async function getCachedAudio(historyId) {
 			request.onsuccess = () => {
 				const result = request.result;
 				if (result) {
-					// Convert ArrayBuffer back to Blob
-					const blob = new Blob([result.audioData], { type: 'audio/mpeg' });
+					// Convert ArrayBuffer back to Blob, using stored MIME type
+					const mime = result.mimeType || 'audio/mpeg';
+					const blob = new Blob([result.audioData], { type: mime });
 					resolve({ blob, timingData: result.timingData });
 				} else {
 					resolve(null);
@@ -118,9 +131,13 @@ export async function getCachedAudio(historyId) {
 export async function removeCachedAudio(historyId) {
 	try {
 		const database = await initDB();
-		const transaction = database.transaction([STORE_NAME], 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		store.delete(historyId);
+		await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readwrite');
+			const store = transaction.objectStore(STORE_NAME);
+			store.delete(historyId);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+		});
 		return true;
 	} catch (err) {
 		console.warn('Failed to remove cached audio:', err);
@@ -134,9 +151,13 @@ export async function removeCachedAudio(historyId) {
 export async function clearAudioCache() {
 	try {
 		const database = await initDB();
-		const transaction = database.transaction([STORE_NAME], 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		store.clear();
+		await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readwrite');
+			const store = transaction.objectStore(STORE_NAME);
+			store.clear();
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+		});
 		return true;
 	} catch (err) {
 		console.warn('Failed to clear audio cache:', err);
@@ -150,31 +171,30 @@ export async function clearAudioCache() {
 async function cleanupCache() {
 	try {
 		const database = await initDB();
-		const transaction = database.transaction([STORE_NAME], 'readwrite');
-		const store = transaction.objectStore(STORE_NAME);
-		const index = store.index('createdAt');
+		await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readwrite');
+			const store = transaction.objectStore(STORE_NAME);
+			const index = store.index('createdAt');
 
-		// Get all entries sorted by creation time
-		const request = index.getAll();
+			// Get all entries sorted by creation time
+			const request = index.getAll();
 
-		return new Promise((resolve) => {
 			request.onsuccess = () => {
 				const entries = request.result;
 				let totalSize = entries.reduce((sum, e) => sum + e.size, 0);
 				let count = entries.length;
 
 				// Remove oldest entries if over limits
-				const toRemove = [];
 				for (let i = 0; i < entries.length && (count > MAX_ENTRIES || totalSize > MAX_SIZE_BYTES); i++) {
-					toRemove.push(entries[i].id);
+					store.delete(entries[i].id);
 					totalSize -= entries[i].size;
 					count--;
 				}
-
-				// Delete marked entries
-				toRemove.forEach((id) => store.delete(id));
-				resolve();
 			};
+
+			// Transaction commits when all requests complete
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
 		});
 	} catch (err) {
 		console.warn('Failed to cleanup cache:', err);

@@ -15,6 +15,9 @@ export const PlayState = {
 	ERROR: 'error',
 };
 
+// Android detection: true when running inside the Android WebView with the native bridge
+const isAndroid = typeof window !== 'undefined' && !!window.Android;
+
 function createPlayerStore() {
 	const state = writable(PlayState.IDLE);
 	const currentTime = writable(0);
@@ -26,6 +29,30 @@ function createPlayerStore() {
 	const speed = writable(1.0);
 	const playbackRate = writable(1.0); // Runtime playback speed (independent of generation speed)
 	const inputText = writable('');
+	const totalChunks = writable(0); // Server-reported chunk count for accurate progress
+
+	// Generation timer (persistent across component mounts)
+	const generationStartTime = writable(null);
+	const generationElapsed = writable(0);
+	let genTimerInterval = null;
+
+	function startGenerationTimer() {
+		generationStartTime.set(Date.now());
+		generationElapsed.set(0);
+		if (genTimerInterval) clearInterval(genTimerInterval);
+		genTimerInterval = setInterval(() => {
+			const start = get(generationStartTime);
+			if (start) generationElapsed.set(Math.floor((Date.now() - start) / 1000));
+		}, 100);
+	}
+
+	function stopGenerationTimer() {
+		generationStartTime.set(null);
+		if (genTimerInterval) {
+			clearInterval(genTimerInterval);
+			genTimerInterval = null;
+		}
+	}
 
 	// Internal: the audio element and blob URL
 	let audioElement = null;
@@ -33,6 +60,63 @@ function createPlayerStore() {
 	let audioChunks = [];
 	let timingData = [];
 	let timeUpdateHandler = null;
+	let activeController = null; // AbortController for the current generation request
+	let cachedBlob = null; // Complete audio blob for download (avoids re-merging chunks)
+
+	// Detect audio format from first bytes
+	function detectAudioMime(chunks) {
+		if (chunks.length > 0 && chunks[0].length >= 2) {
+			const h = chunks[0];
+			// WAV: starts with "RIFF"
+			if (h.length >= 4 && h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46) {
+				return 'audio/wav';
+			}
+			// AAC ADTS: sync word 0xFFF, layer bits 00 (distinguishes from MP3 sync 0xFFE)
+			if (h[0] === 0xFF && (h[1] & 0xF6) === 0xF0) {
+				return 'audio/aac';
+			}
+		}
+		return 'audio/mpeg';
+	}
+
+	// Merge multiple WAV chunks into a single valid WAV file.
+	// Each chunk is a complete WAV (44-byte header + PCM data).
+	// We take the first header, concatenate all PCM data, and fix the size fields.
+	function mergeWavChunks(chunks) {
+		if (chunks.length === 1) return new Blob(chunks, { type: 'audio/wav' });
+
+		let totalPcmSize = 0;
+		for (const chunk of chunks) {
+			totalPcmSize += chunk.length - 44;
+		}
+
+		const result = new Uint8Array(44 + totalPcmSize);
+		// Copy first chunk's 44-byte header
+		result.set(chunks[0].subarray(0, 44));
+
+		// Update RIFF file size at offset 4 (little-endian uint32): 36 + totalPcmSize
+		const fileSize = 36 + totalPcmSize;
+		result[4] = fileSize & 0xff;
+		result[5] = (fileSize >> 8) & 0xff;
+		result[6] = (fileSize >> 16) & 0xff;
+		result[7] = (fileSize >> 24) & 0xff;
+
+		// Update data chunk size at offset 40 (little-endian uint32)
+		result[40] = totalPcmSize & 0xff;
+		result[41] = (totalPcmSize >> 8) & 0xff;
+		result[42] = (totalPcmSize >> 16) & 0xff;
+		result[43] = (totalPcmSize >> 24) & 0xff;
+
+		// Copy PCM data from all chunks (skip each chunk's 44-byte header)
+		let offset = 44;
+		for (const chunk of chunks) {
+			const pcm = chunk.subarray(44);
+			result.set(pcm, offset);
+			offset += pcm.length;
+		}
+
+		return new Blob([result], { type: 'audio/wav' });
+	}
 
 	// Notification support for background generation
 	function notifyGenerationComplete() {
@@ -67,10 +151,13 @@ function createPlayerStore() {
 		}
 		audioChunks = [];
 		timingData = [];
+		cachedBlob = null;
 		currentTime.set(0);
 		duration.set(0);
 		segments.set([]);
 		activeSegmentIndex.set(-1);
+		totalChunks.set(0);
+		stopGenerationTimer();
 	}
 
 	function handleEnded() {
@@ -82,6 +169,7 @@ function createPlayerStore() {
 			return;
 		}
 		state.set(PlayState.PAUSED);
+		window.Android?.onPlaybackStopped();
 	}
 
 	// Reference to the store object (set after creation) for use in handleEnded
@@ -114,6 +202,8 @@ function createPlayerStore() {
 		speed,
 		playbackRate,
 		inputText,
+		totalChunks,
+		generationElapsed,
 
 		/**
 		 * Start streaming TTS generation.
@@ -124,17 +214,38 @@ function createPlayerStore() {
 		 * @param {number|null} historyId - Optional history ID for caching
 		 */
 		async generate(text, voiceName, speedVal, autoPlay = true, historyId = null) {
+			// Abort any in-flight generation before starting a new one
+			if (activeController) {
+				activeController.abort();
+				activeController = null;
+			}
 			resetAudio();
 			state.set(PlayState.GENERATING);
+			startGenerationTimer();
+			window.Android?.onGenerationStarted();
 			voice.set(voiceName);
 			speed.set(speedVal);
 			inputText.set(text);
 			errorMessage.set('');
 			requestNotificationPermission();
 
+			// Abort controller with inactivity timeout — if no data arrives,
+			// assume the server is stuck and abort.
+			// Android: 60 min (on-device generation is slow + WebView JS is throttled when backgrounded)
+			// Desktop: 3 min (server should respond quickly)
+			const controller = new AbortController();
+			activeController = controller;
+			let inactivityTimer = null;
+			const INACTIVITY_TIMEOUT = isAndroid ? 3_600_000 : 180_000;
+
+			function resetInactivityTimer() {
+				if (inactivityTimer) clearTimeout(inactivityTimer);
+				inactivityTimer = setTimeout(() => controller.abort(), INACTIVITY_TIMEOUT);
+			}
+
 			try {
-				// Use POST with JSON body to handle arbitrarily long text
-				// (GET query params have ~2KB-8KB length limits)
+				resetInactivityTimer();
+
 				const response = await fetch(apiUrl('/api/tts/stream'), {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -143,6 +254,7 @@ function createPlayerStore() {
 						voice: voiceName,
 						speed: speedVal,
 					}),
+					signal: controller.signal,
 				});
 				if (!response.ok) {
 					const err = await response.json().catch(() => ({ detail: response.statusText }));
@@ -151,11 +263,12 @@ function createPlayerStore() {
 
 				const reader = response.body.getReader();
 				let buffer = new Uint8Array(0);
-				let pendingAudioBytes = 0; // when > 0, we're reading exactly this many bytes of MP3
+				let pendingAudioBytes = 0;
 
 				while (true) {
 					const { done, value } = await reader.read();
 					if (done) break;
+					resetInactivityTimer();
 
 					// Append new data to buffer
 					const combined = new Uint8Array(buffer.length + value.length);
@@ -164,22 +277,21 @@ function createPlayerStore() {
 					buffer = combined;
 
 					// Process buffer using length-prefixed framing protocol:
+					//   CHUNKS:{total}\n        (sent once at start)
 					//   TIMING:{json}\n
 					//   AUDIO:{length}\n
-					//   {exactly length bytes of MP3}
+					//   {exactly length bytes of audio}
 					while (buffer.length > 0) {
 						if (pendingAudioBytes > 0) {
-							// Reading binary MP3 data — take exactly pendingAudioBytes
-							if (buffer.length < pendingAudioBytes) break; // need more data
+							if (buffer.length < pendingAudioBytes) break;
 							audioChunks.push(buffer.slice(0, pendingAudioBytes));
 							buffer = buffer.slice(pendingAudioBytes);
 							pendingAudioBytes = 0;
 							continue;
 						}
 
-						// Looking for a text line (TIMING: or AUDIO:)
 						const newlineIdx = buffer.indexOf(10); // \n
-						if (newlineIdx === -1) break; // incomplete line, wait for more data
+						if (newlineIdx === -1) break;
 
 						const line = new TextDecoder().decode(buffer.slice(0, newlineIdx));
 						buffer = buffer.slice(newlineIdx + 1);
@@ -188,33 +300,41 @@ function createPlayerStore() {
 							const timing = JSON.parse(line.slice(7));
 							timingData.push(timing);
 							segments.set([...timingData]);
+							if (window.Android?.updateGenerationProgress) {
+								window.Android.updateGenerationProgress(timingData.length, get(totalChunks) || 0);
+							}
 						} else if (line.startsWith('AUDIO:')) {
 							pendingAudioBytes = parseInt(line.slice(6), 10);
+						} else if (line.startsWith('CHUNKS:')) {
+							const total = parseInt(line.slice(7), 10);
+							if (total > 0) totalChunks.set(total);
 						}
 					}
 				}
 
+				// Stream complete — stop the inactivity timer before post-processing
+				if (inactivityTimer) {
+					clearTimeout(inactivityTimer);
+					inactivityTimer = null;
+				}
+
 				// Handle any remaining buffered audio data
-				if (pendingAudioBytes > 0 && buffer.length > 0) {
+				if (pendingAudioBytes > 0 && buffer.length >= pendingAudioBytes) {
 					audioChunks.push(buffer.slice(0, pendingAudioBytes));
 				}
 
-				// Build audio blob and create playback element
-				const blob = new Blob(audioChunks, { type: 'audio/mpeg' });
+				// Build audio blob and start playback immediately
+				const mime = detectAudioMime(audioChunks);
+				const blob = mime === 'audio/wav' ? mergeWavChunks(audioChunks) : new Blob(audioChunks, { type: mime });
+				cachedBlob = blob;
 				blobUrl = URL.createObjectURL(blob);
 
-				// Cache the audio if historyId provided
-				if (historyId) {
-					cacheAudio(historyId, blob, timingData);
-				}
-
 				audioElement = new Audio(blobUrl);
-				audioElement.playbackRate = get(playbackRate); // Apply saved playback rate
+				audioElement.playbackRate = get(playbackRate);
 				timeUpdateHandler = updateActiveSegment;
 				audioElement.addEventListener('timeupdate', timeUpdateHandler);
 				audioElement.addEventListener('ended', handleEnded);
 
-				// Wait for metadata to load
 				await new Promise((resolve, reject) => {
 					audioElement.addEventListener('loadedmetadata', resolve, { once: true });
 					audioElement.addEventListener('error', reject, { once: true });
@@ -226,12 +346,48 @@ function createPlayerStore() {
 				if (autoPlay) {
 					audioElement.play();
 					state.set(PlayState.PLAYING);
+					window.Android?.onPlaybackStarted();
 				} else {
 					state.set(PlayState.PAUSED);
+					window.Android?.onPlaybackPaused();
+				}
+
+				// Cache in background AFTER playback starts — don't block the user
+				if (historyId) {
+					cacheAudio(historyId, blob, timingData).catch(
+						(err) => console.warn('Cache write failed:', err.message)
+					);
 				}
 			} catch (err) {
-				errorMessage.set(err.message);
+				// Clean up any audio resources allocated before the error
+				if (audioElement) {
+					audioElement.pause();
+					audioElement.removeEventListener('timeupdate', timeUpdateHandler);
+					audioElement.removeEventListener('ended', handleEnded);
+					audioElement = null;
+				}
+				if (blobUrl) {
+					URL.revokeObjectURL(blobUrl);
+					blobUrl = null;
+				}
+				cachedBlob = null;
+
+				// Don't show error if this generation was aborted by a newer one
+				if (err.name === 'AbortError' && activeController !== controller) {
+					return; // Superseded by a new generation — silently exit
+				}
+				if (err.name === 'AbortError') {
+					const timeoutMin = isAndroid ? 60 : 3;
+					errorMessage.set(`Generation timed out — no data received for ${timeoutMin} minutes`);
+				} else {
+					errorMessage.set(err.message);
+				}
 				state.set(PlayState.ERROR);
+				window.Android?.onPlaybackStopped();
+			} finally {
+				if (inactivityTimer) clearTimeout(inactivityTimer);
+				if (activeController === controller) activeController = null;
+				stopGenerationTimer();
 			}
 		},
 
@@ -241,14 +397,11 @@ function createPlayerStore() {
 		 * @param {boolean} autoPlay - Whether to auto-play
 		 */
 		async playFromHistory(entry, autoPlay = true) {
-			// Check cache first with a timeout
+			// Read from local IndexedDB cache — no timeout needed since this is
+			// a local read that either succeeds or fails (not a network request).
 			let cached = null;
 			try {
-				const cachePromise = getCachedAudio(entry.id);
-				const timeoutPromise = new Promise((_, reject) =>
-					setTimeout(() => reject(new Error('Cache timeout')), 5000)
-				);
-				cached = await Promise.race([cachePromise, timeoutPromise]);
+				cached = await getCachedAudio(entry.id);
 			} catch (err) {
 				console.warn('Cache retrieval failed:', err.message);
 				cached = null;
@@ -258,15 +411,16 @@ function createPlayerStore() {
 				// Play from cache
 				resetAudio();
 				state.set(PlayState.GENERATING); // Brief loading state
+				startGenerationTimer();
+				window.Android?.onGenerationStarted();
 				voice.set(entry.voice);
 				speed.set(entry.speed);
 				inputText.set(entry.text);
 				errorMessage.set('');
 
 				try {
-					// Convert blob to ArrayBuffer and store in audioChunks for download support
-					const arrayBuffer = await cached.blob.arrayBuffer();
-					audioChunks = [new Uint8Array(arrayBuffer)];
+					// Store blob reference for download support (no expensive ArrayBuffer copy)
+					cachedBlob = cached.blob;
 
 					blobUrl = URL.createObjectURL(cached.blob);
 					timingData = cached.timingData || [];
@@ -279,21 +433,30 @@ function createPlayerStore() {
 					audioElement.addEventListener('ended', handleEnded);
 
 					await new Promise((resolve, reject) => {
-						audioElement.addEventListener('loadedmetadata', resolve, { once: true });
-						audioElement.addEventListener('error', reject, { once: true });
+						// Timeout prevents permanent hang from corrupt cached audio
+						const timeout = setTimeout(() => reject(new Error('Audio load timed out')), 10_000);
+						audioElement.addEventListener('loadedmetadata', () => { clearTimeout(timeout); resolve(); }, { once: true });
+						audioElement.addEventListener('error', () => { clearTimeout(timeout); reject(audioElement.error || new Error('Audio failed to load')); }, { once: true });
 					});
 
 					duration.set(audioElement.duration);
+					stopGenerationTimer();
 
 					if (autoPlay) {
 						audioElement.play();
 						state.set(PlayState.PLAYING);
+						window.Android?.onPlaybackStarted();
 					} else {
 						state.set(PlayState.PAUSED);
+						window.Android?.onPlaybackPaused();
 					}
 				} catch (err) {
-					errorMessage.set(err.message);
-					state.set(PlayState.ERROR);
+					stopGenerationTimer();
+					// Cached audio failed (corrupt data, unsupported format, timeout).
+					// Fall back to regenerating fresh audio instead of dead-ending on error.
+					console.warn('Cached audio playback failed, regenerating:', err.message);
+					resetAudio();
+					await this.generate(entry.text, entry.voice, entry.speed, autoPlay, entry.id);
 				}
 			} else {
 				// No cache, regenerate and cache
@@ -309,6 +472,7 @@ function createPlayerStore() {
 				}
 				audioElement.play();
 				state.set(PlayState.PLAYING);
+				window.Android?.onPlaybackStarted();
 			}
 		},
 
@@ -316,12 +480,18 @@ function createPlayerStore() {
 			if (audioElement) {
 				audioElement.pause();
 				state.set(PlayState.PAUSED);
+				window.Android?.onPlaybackPaused();
 			}
 		},
 
 		stop() {
+			if (activeController) {
+				activeController.abort();
+				activeController = null;
+			}
 			resetAudio();
 			state.set(PlayState.IDLE);
+			window.Android?.onPlaybackStopped();
 		},
 
 		seek(time) {
@@ -345,10 +515,39 @@ function createPlayerStore() {
 
 		getAudioBlob() {
 			// Return the current audio as a blob for download
+			if (cachedBlob) return cachedBlob;
 			if (audioChunks.length > 0) {
-				return new Blob(audioChunks, { type: 'audio/mpeg' });
+				const mime = detectAudioMime(audioChunks);
+				return mime === 'audio/wav' ? mergeWavChunks(audioChunks) : new Blob(audioChunks, { type: mime });
 			}
 			return null;
+		},
+
+		async downloadAudio(blob, filename) {
+			if (window.Android?.saveAudioFile) {
+				// Android WebView: convert blob to base64 and send to native
+				const arrayBuffer = await blob.arrayBuffer();
+				const bytes = new Uint8Array(arrayBuffer);
+				// Chunked base64 encoding to avoid call stack overflow
+				let binary = '';
+				const chunkSize = 8192;
+				for (let i = 0; i < bytes.length; i += chunkSize) {
+					const chunk = bytes.subarray(i, i + chunkSize);
+					binary += String.fromCharCode.apply(null, chunk);
+				}
+				const base64 = btoa(binary);
+				window.Android.saveAudioFile(base64, filename, blob.type || 'audio/wav');
+			} else {
+				// Desktop: standard blob URL download
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = filename;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+				URL.revokeObjectURL(url);
+			}
 		},
 	};
 

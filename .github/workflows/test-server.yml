@@ -41,12 +41,3 @@ jobs:
         working-directory: ./server
         run: |
           pytest tests/ -v --tb=short
-
-      - name: Run linter (if we add it)
-        working-directory: ./server
-        run: |
-          # Uncomment when we add linting
-          # pip install black flake8
-          # black --check src/
-          # flake8 src/
-        continue-on-error: true

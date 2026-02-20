@@ -26,9 +26,9 @@ class KokoroBackend(TTSBackend):
     ):
         from kokoro import KPipeline
 
-        self.lang_code = lang_code or settings.KOKORO_LANG_CODE
-        self.default_voice = default_voice or settings.DEFAULT_VOICE
-        self.default_speed = default_speed or settings.DEFAULT_SPEED
+        self.lang_code = lang_code if lang_code is not None else settings.KOKORO_LANG_CODE
+        self.default_voice = default_voice if default_voice is not None else settings.DEFAULT_VOICE
+        self.default_speed = default_speed if default_speed is not None else settings.DEFAULT_SPEED
 
         # Initialize Kokoro pipeline
         self.pipeline = KPipeline(lang_code=self.lang_code)
@@ -87,8 +87,8 @@ class KokoroBackend(TTSBackend):
         Uses parallel encoding: MP3 encoding runs in a thread pool while
         Kokoro continues generating the next segment.
         """
-        voice = voice or self.default_voice
-        speed = speed or self.default_speed
+        voice = voice if voice is not None else self.default_voice
+        speed = speed if speed is not None else self.default_speed
 
         cumulative_time = 0.0
         pending_encode = None
@@ -142,8 +142,8 @@ class KokoroBackend(TTSBackend):
         speed: float = None,
     ) -> Tuple[np.ndarray, float]:
         """Generate speech audio synchronously (non-streaming)."""
-        voice = voice or self.default_voice
-        speed = speed or self.default_speed
+        voice = voice if voice is not None else self.default_voice
+        speed = speed if speed is not None else self.default_speed
 
         audio_chunks = []
         for graphemes, phonemes, audio_array in self.pipeline(text, voice=voice, speed=speed):

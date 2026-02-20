@@ -375,8 +375,8 @@ class TextPreprocessor:
                 if not sentence.strip():
                     continue
 
-                # Rough token estimate: ~4 characters per token
-                sentence_tokens = len(sentence) // 4
+                # Rough token estimate: ~4 characters per token (minimum 1)
+                sentence_tokens = max(1, len(sentence) // 4)
 
                 # If adding this sentence exceeds max, save current chunk
                 if current_length + sentence_tokens > self.max_chunk_tokens and current_chunk:

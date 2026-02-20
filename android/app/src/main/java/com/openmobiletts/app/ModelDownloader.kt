@@ -12,16 +12,17 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 
 /**
- * Downloads the Sherpa-ONNX Kokoro INT8 model on first launch.
+ * Downloads the Sherpa-ONNX Kokoro multi-lang model on first launch.
  *
- * Downloads to [destDir]/kokoro-int8-multi-lang-v1_1/ (~95 MB).
- * The INT8 quantized model is smaller and faster on mobile devices.
+ * Downloads to [destDir]/kokoro-multi-lang-v1_0/ (~350 MB).
+ * Uses v1_0 which has all 53 voices with correct SID mapping.
+ * (v1_1 is Chinese-focused with only 3 English voices and different SIDs.)
  */
 class ModelDownloader {
 
     companion object {
         private const val TAG = "ModelDownloader"
-        private const val MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
+        private const val MODEL_NAME = "kokoro-multi-lang-v1_0"
         private const val MODEL_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$MODEL_NAME.tar.bz2"
     }
@@ -58,21 +59,21 @@ class ModelDownloader {
         Log.i(TAG, "Downloading model from: $MODEL_URL")
         val tempFile = File(destDir, "$MODEL_NAME.tar.bz2")
 
+        val openedConnections = mutableListOf<HttpURLConnection>()
         try {
-            // Download
+            // Download — follow redirects manually to handle GitHub CDN
             val url = URL(MODEL_URL)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.instanceFollowRedirects = true
-            connection.connect()
-
-            // GitHub redirects — follow manually if needed
-            var conn = connection
+            var conn = url.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connect()
+            openedConnections.add(conn)
             var redirectCount = 0
             while (conn.responseCode in 301..302 && redirectCount < 5) {
                 val newUrl = conn.getHeaderField("Location")
                 conn = URL(newUrl).openConnection() as HttpURLConnection
                 conn.instanceFollowRedirects = true
                 conn.connect()
+                openedConnections.add(conn)
                 redirectCount++
             }
 
@@ -96,12 +97,19 @@ class ModelDownloader {
             Log.i(TAG, "Download complete, extracting...")
 
             // Extract tar.bz2
+            val canonicalDest = destDir.canonicalFile
             destDir.mkdirs()
             BZip2CompressorInputStream(BufferedInputStream(tempFile.inputStream())).use { bzIn ->
                 TarArchiveInputStream(bzIn).use { tarIn ->
                     var entry = tarIn.nextTarEntry
                     while (entry != null) {
-                        val outFile = File(destDir, entry.name)
+                        val outFile = File(destDir, entry.name).canonicalFile
+                        // Guard against path traversal (Zip Slip)
+                        if (!outFile.path.startsWith(canonicalDest.path)) {
+                            Log.w(TAG, "Skipping tar entry outside target dir: ${entry.name}")
+                            entry = tarIn.nextTarEntry
+                            continue
+                        }
                         if (entry.isDirectory) {
                             outFile.mkdirs()
                         } else {
@@ -116,8 +124,8 @@ class ModelDownloader {
             }
 
             Log.i(TAG, "Model extracted to: $modelDir")
-
         } finally {
+            openedConnections.forEach { it.disconnect() }
             tempFile.delete()
         }
     }

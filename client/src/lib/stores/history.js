@@ -21,6 +21,8 @@ function saveHistory(entries) {
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_ENTRIES)));
 }
 
+let idCounter = 0;
+
 function createHistoryStore() {
 	const { subscribe, set, update } = writable(loadHistory());
 
@@ -32,7 +34,8 @@ function createHistoryStore() {
 		 * @returns {number} The ID of the new entry (for caching)
 		 */
 		add(entry) {
-			const id = Date.now();
+			// Use timestamp * 1000 + counter to avoid collision on rapid calls
+			const id = Date.now() * 1000 + (idCounter++ % 1000);
 			update((entries) => {
 				const next = [
 					{

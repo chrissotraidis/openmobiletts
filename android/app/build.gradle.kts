@@ -34,12 +34,9 @@ android {
         jvmTarget = "1.8"
     }
 
-    buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
+    // SvelteKit outputs to _app/ — AAPT ignores underscore-prefixed dirs by default
+    aaptOptions {
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
     }
 
     packaging {
@@ -50,25 +47,22 @@ android {
 }
 
 dependencies {
-    // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
-    implementation(composeBom)
-
-    // Compose
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-
     // Core
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
+    // Lifecycle
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.7.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // WebView
+    implementation("androidx.webkit:webkit:1.10.0")
+
+    // Embedded HTTP server
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 
     // Sherpa-ONNX — JNI .so files in app/src/main/jniLibs/, Kotlin API in source
     // No AAR needed: native libs are bundled directly
@@ -76,6 +70,11 @@ dependencies {
     // Archive extraction for model download (tar.bz2)
     implementation("org.apache.commons:commons-compress:1.26.1")
 
-    // Debug
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    // PDF text extraction for document upload
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+}
+
+tasks.register<Exec>("bundleWebApp") {
+    workingDir = file("${rootDir}/../client")
+    commandLine("bash", "-c", "npm run build && rm -rf ${projectDir}/src/main/assets/webapp && cp -r build ${projectDir}/src/main/assets/webapp")
 }

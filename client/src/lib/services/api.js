@@ -3,7 +3,7 @@
  * No authentication needed (single-user local app).
  *
  * On the web (same-origin), base URL is empty so all fetches are relative.
- * On Android (Capacitor), the user sets a server URL in Settings, which is
+ * On remote clients, the user sets a server URL in Settings, which is
  * read from localStorage and prepended to all API paths.
  */
 

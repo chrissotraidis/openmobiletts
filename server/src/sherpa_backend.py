@@ -143,8 +143,8 @@ class SherpaOnnxBackend(TTSBackend):
         synthesized as one audio segment. Uses the same parallel-encode
         pattern as KokoroBackend for consistent streaming behavior.
         """
-        voice = voice or self.default_voice
-        speed = speed or self.default_speed
+        voice = voice if voice is not None else self.default_voice
+        speed = speed if speed is not None else self.default_speed
         sid = self._voice_to_sid(voice)
 
         cumulative_time = 0.0
@@ -205,8 +205,8 @@ class SherpaOnnxBackend(TTSBackend):
         speed: float = None,
     ) -> Tuple[np.ndarray, float]:
         """Generate speech synchronously (non-streaming)."""
-        voice = voice or self.default_voice
-        speed = speed or self.default_speed
+        voice = voice if voice is not None else self.default_voice
+        speed = speed if speed is not None else self.default_speed
         sid = self._voice_to_sid(voice)
 
         audio = self.tts.generate(text, sid=sid, speed=speed)
