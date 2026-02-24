@@ -60,10 +60,11 @@
 	}
 
 	// Progress tracking during generation
-	let genSegments = $state([]);
 	let genInputText = $state('');
 	let genTotalChunks = $state(0);
+	let genChunksCompletedVal = $state(0);
 	let genElapsed = $state(0);
+	let genEta = $state(null);
 
 	const unsubs = [
 		playerStore.state.subscribe((s) => (playerState = s)),
@@ -73,10 +74,11 @@
 		playerStore.speed.subscribe((s) => (speed = s)),
 		playerStore.playbackRate.subscribe((r) => (playbackRate = r)),
 		playerStore.errorMessage.subscribe((e) => (errorMessage = e)),
-		playerStore.segments.subscribe((s) => (genSegments = s)),
 		playerStore.inputText.subscribe((t) => (genInputText = t)),
 		playerStore.totalChunks.subscribe((n) => (genTotalChunks = n)),
+		playerStore.chunksCompleted.subscribe((n) => (genChunksCompletedVal = n)),
 		playerStore.generationElapsed.subscribe((t) => (genElapsed = t)),
+		playerStore.estimatedSecondsLeft.subscribe((n) => (genEta = n)),
 		playlistStore.items.subscribe((items) => (queueItems = items)),
 		playlistStore.currentIndex.subscribe((i) => (queueCurrentIndex = i)),
 	];
@@ -98,11 +100,11 @@
 
 	// Generation progress calculation
 	// Server sends CHUNKS:{total} for accurate count; fallback to text length estimate
-	const genChunksReceived = $derived(genSegments.length);
+	const genChunksReceived = $derived(genChunksCompletedVal);
 	const genEstimatedTotal = $derived(
 		genTotalChunks > 0
 			? genTotalChunks
-			: Math.max(1, Math.ceil(genInputText.length / 700))
+			: Math.max(1, Math.ceil(genInputText.length / 1000))
 	);
 	const genProgressPct = $derived(
 		genChunksReceived > 0
@@ -323,7 +325,7 @@
 				<!-- Time / Generation Progress -->
 				<span class="text-[11px] font-mono text-slate-500 min-w-[80px]">
 					{#if isGenerating}
-						{genProgressPct}% · {formatElapsed(genElapsed)}
+						{genProgressPct}%{#if genEta !== null && genEta > 0} · ~{formatElapsed(genEta)} left{:else} · {formatElapsed(genElapsed)}{/if}
 					{:else}
 						{formatTime(currentTime)} / {formatTime(duration)}
 					{/if}

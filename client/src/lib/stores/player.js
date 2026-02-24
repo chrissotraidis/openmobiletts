@@ -30,6 +30,8 @@ function createPlayerStore() {
 	const playbackRate = writable(1.0); // Runtime playback speed (independent of generation speed)
 	const inputText = writable('');
 	const totalChunks = writable(0); // Server-reported chunk count for accurate progress
+	const chunksCompleted = writable(0); // Highest chunk_index seen + 1 (tracks text chunks, not sub-segments)
+	const estimatedSecondsLeft = writable(null); // ETA based on average chunk time
 
 	// Generation timer (persistent across component mounts)
 	const generationStartTime = writable(null);
@@ -157,6 +159,8 @@ function createPlayerStore() {
 		segments.set([]);
 		activeSegmentIndex.set(-1);
 		totalChunks.set(0);
+		chunksCompleted.set(0);
+		estimatedSecondsLeft.set(null);
 		stopGenerationTimer();
 	}
 
@@ -203,6 +207,8 @@ function createPlayerStore() {
 		playbackRate,
 		inputText,
 		totalChunks,
+		chunksCompleted,
+		estimatedSecondsLeft,
 		generationElapsed,
 
 		/**
@@ -300,8 +306,25 @@ function createPlayerStore() {
 							const timing = JSON.parse(line.slice(7));
 							timingData.push(timing);
 							segments.set([...timingData]);
+							// Track progress by chunk_index (text chunks), not segment count.
+							// Kokoro emits multiple segments per chunk, so segment count overshoots.
+							if (typeof timing.chunk_index === 'number') {
+								const completed = timing.chunk_index + 1;
+								if (completed > get(chunksCompleted)) {
+									chunksCompleted.set(completed);
+									// Calculate ETA from elapsed time and chunks completed
+									const total = get(totalChunks);
+									const startMs = get(generationStartTime);
+									if (total > 0 && startMs && completed > 0) {
+										const elapsedSec = (Date.now() - startMs) / 1000;
+										const secPerChunk = elapsedSec / completed;
+										const remaining = Math.round(secPerChunk * (total - completed));
+										estimatedSecondsLeft.set(remaining);
+									}
+								}
+							}
 							if (window.Android?.updateGenerationProgress) {
-								window.Android.updateGenerationProgress(timingData.length, get(totalChunks) || 0);
+								window.Android.updateGenerationProgress(get(chunksCompleted), get(totalChunks) || 0);
 							}
 						} else if (line.startsWith('AUDIO:')) {
 							pendingAudioBytes = parseInt(line.slice(6), 10);
@@ -334,6 +357,11 @@ function createPlayerStore() {
 				timeUpdateHandler = updateActiveSegment;
 				audioElement.addEventListener('timeupdate', timeUpdateHandler);
 				audioElement.addEventListener('ended', handleEnded);
+				audioElement.addEventListener('durationchange', () => {
+					if (audioElement && isFinite(audioElement.duration)) {
+						duration.set(audioElement.duration);
+					}
+				});
 
 				await new Promise((resolve, reject) => {
 					audioElement.addEventListener('loadedmetadata', resolve, { once: true });
@@ -431,6 +459,11 @@ function createPlayerStore() {
 					timeUpdateHandler = updateActiveSegment;
 					audioElement.addEventListener('timeupdate', timeUpdateHandler);
 					audioElement.addEventListener('ended', handleEnded);
+					audioElement.addEventListener('durationchange', () => {
+						if (audioElement && isFinite(audioElement.duration)) {
+							duration.set(audioElement.duration);
+						}
+					});
 
 					await new Promise((resolve, reject) => {
 						// Timeout prevents permanent hang from corrupt cached audio

@@ -257,10 +257,16 @@ class TtsHttpServer(
 
                     cumulativeTime += duration
                     AppLog.i(TAG, "Streamed chunk $chunkIndex: ${audioBytes.size} bytes, duration=${String.format("%.2f", duration)}s")
+
+                    // Update native notification directly — works even when WebView JS is paused
+                    TtsService.instance?.updateProgress(chunkIndex + 1, chunks.size)
                 }
 
                 stream.finish()
                 AppLog.i(TAG, "TTS stream complete: ${chunks.size} chunks, total=${String.format("%.2f", cumulativeTime)}s")
+
+                // Notify completion via native notification (works even if app is backgrounded)
+                TtsService.instance?.notifyComplete(chunks.size, cumulativeTime)
             } catch (e: Exception) {
                 AppLog.e(TAG, "TTS generation error", e)
                 stream.finishWithError(e)

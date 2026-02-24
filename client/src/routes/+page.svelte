@@ -197,7 +197,7 @@
 	</aside>
 
 	<!-- MAIN CONTENT AREA -->
-	<main class="flex-1 flex flex-col overflow-hidden relative pb-20 md:pb-0">
+	<main class="flex-1 flex flex-col overflow-hidden relative pb-[140px] md:pb-0">
 
 		<!-- TOP BAR -->
 		<header class="h-14 border-b border-white/5 flex items-center justify-between px-4 md:px-8 bg-[#0a0c10]/50 backdrop-blur-md z-20 shrink-0">

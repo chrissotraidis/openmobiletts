@@ -151,6 +151,9 @@ async def stream_tts(request: TTSRequest):
 
     async def generate_stream():
         """Generator that yields timing metadata and audio chunks."""
+        # Send total chunk count first so the client can show accurate progress
+        yield f"CHUNKS:{len(text_chunks)}\n".encode('utf-8')
+
         chunk_count = 0
         total_audio_bytes = 0
         try:
@@ -296,6 +299,9 @@ async def stream_document(
         logger.info(f"Document processed into {len(text_chunks)} chunks for TTS")
 
         async def generate_stream():
+            # Send total chunk count first so the client can show accurate progress
+            yield f"CHUNKS:{len(text_chunks)}\n".encode('utf-8')
+
             chunk_count = 0
             total_bytes = 0
             try:

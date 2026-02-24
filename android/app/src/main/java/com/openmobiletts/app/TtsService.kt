@@ -92,6 +92,36 @@ class TtsService : Service() {
         } catch (_: SecurityException) {}
     }
 
+    fun notifyComplete(chunks: Int, totalDuration: Double) {
+        try {
+            val minutes = (totalDuration / 60).toInt()
+            val seconds = (totalDuration % 60).toInt()
+            val durationText = if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+
+            // Update the ongoing foreground notification to show completion
+            updateNotification("Audio ready — $durationText of speech generated")
+
+            // Also post a heads-up notification on the COMPLETE channel
+            // so the user sees it even if the app is in the background
+            val notification = NotificationCompat.Builder(this, OpenMobileTtsApp.CHANNEL_COMPLETE)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle("Audio Ready")
+                .setContentText("$chunks chunks generated ($durationText of speech)")
+                .setAutoCancel(true)
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this, 0,
+                        Intent(this, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        },
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
+                .build()
+            NotificationManagerCompat.from(this).notify(2, notification)
+        } catch (_: SecurityException) {}
+    }
+
     fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager

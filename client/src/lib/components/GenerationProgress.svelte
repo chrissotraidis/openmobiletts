@@ -3,29 +3,33 @@
 	import { onDestroy } from 'svelte';
 	import { AudioLines, Zap } from 'lucide-svelte';
 
+	const isAndroid = typeof window !== 'undefined' && !!window.Android;
+
 	let playerState = $state(PlayState.IDLE);
-	let segments = $state([]);
 	let inputText = $state('');
 	let serverTotalChunks = $state(0);
+	let serverChunksCompleted = $state(0);
 	let elapsedTime = $state(0);
+	let eta = $state(null);
 
 	const unsubs = [
 		playerStore.state.subscribe((s) => (playerState = s)),
-		playerStore.segments.subscribe((s) => (segments = s)),
 		playerStore.inputText.subscribe((t) => (inputText = t)),
 		playerStore.totalChunks.subscribe((n) => (serverTotalChunks = n)),
+		playerStore.chunksCompleted.subscribe((n) => (serverChunksCompleted = n)),
 		playerStore.generationElapsed.subscribe((t) => (elapsedTime = t)),
+		playerStore.estimatedSecondsLeft.subscribe((n) => (eta = n)),
 	];
 	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
-	const chunksReceived = $derived(segments.length);
+	const chunksReceived = $derived(serverChunksCompleted);
 
 	// Use server-reported chunk count when available, otherwise estimate from text length
 	const estimatedTotalChunks = $derived(
 		serverTotalChunks > 0
 			? serverTotalChunks
-			: Math.max(1, Math.ceil(inputText.length / 700))
+			: Math.max(1, Math.ceil(inputText.length / 1000))
 	);
 
 	const progressPercent = $derived(
@@ -39,6 +43,10 @@
 		const s = seconds % 60;
 		return m > 0 ? `${m}m ${s}s` : `${s}s`;
 	}
+
+	const etaText = $derived(
+		eta !== null && eta > 0 ? `~${formatTime(eta)} remaining` : null
+	);
 </script>
 
 {#if isGenerating}
@@ -78,11 +86,11 @@
 					></div>
 				</div>
 
-				<!-- Chunks counter -->
+				<!-- Chunks counter + ETA -->
 				<div class="flex items-center justify-between mt-2">
 					<span class="text-[10px] text-slate-500">
 						{#if chunksReceived > 0}
-							<span class="text-blue-400">{chunksReceived}</span> of {serverTotalChunks > 0 ? '' : '~'}{estimatedTotalChunks} chunks
+							<span class="text-blue-400">{chunksReceived}</span> of {serverTotalChunks > 0 ? '' : '~'}{estimatedTotalChunks} chunks{#if etaText} &middot; {etaText}{/if}
 						{:else}
 							Analyzing text...
 						{/if}
@@ -92,6 +100,13 @@
 						Processing on device
 					</span>
 				</div>
+
+				<!-- Background notice for Android -->
+				{#if isAndroid && chunksReceived > 0}
+					<div class="mt-2 text-[10px] text-slate-600">
+						You can switch apps — generation continues in the background
+					</div>
+				{/if}
 			</div>
 		</div>
 	</div>
