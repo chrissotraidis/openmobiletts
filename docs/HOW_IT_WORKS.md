@@ -129,32 +129,36 @@ Open Mobile TTS is a **single-process application**. `python run.py` builds the 
 
 ## Streaming Protocol
 
-The server streams a mix of text metadata and binary audio:
+The server streams a length-prefixed mix of text metadata and binary audio:
 
 ```
-TIMING:{"text":"Hello world","start":0,"end":1.2}\n
-<binary MP3 data>
-TIMING:{"text":"This is a test","start":1.2,"end":2.5}\n
-<binary MP3 data>
-TIMING:{"text":"of the system","start":2.5,"end":3.8}\n
-<binary MP3 data>
+JOB:{id}\n                         (Android only — job ID for stream-drop recovery)
+CHUNKS:{total}\n                   (total chunk count for progress display)
+TIMING:{"text":"Hello world","start":0,"end":1.2,"chunk_index":0,"starts_paragraph":true}\n
+AUDIO:{length}\n
+<exactly {length} bytes of binary audio>
+TIMING:{"text":"This is a test","start":1.2,"end":2.5,"chunk_index":1,"starts_paragraph":false}\n
+AUDIO:{length}\n
+<exactly {length} bytes of binary audio>
 ...
 ```
+
+The `JOB:` line is emitted only by the Android server. Both desktop and Android emit `CHUNKS:` and the `TIMING:`/`AUDIO:` pairs.
 
 ### Why This Design?
 
 1. **Progressive playback**: Browser can start playing before all audio is generated
 2. **Synchronized highlighting**: Timing data allows text to highlight as it's spoken
-3. **Efficient**: No base64 encoding, raw binary MP3 data
+3. **Efficient**: Length-prefixed binary framing — no base64 encoding
 4. **Interruptible**: Can cancel generation mid-stream
+5. **Recoverable (Android)**: If the stream drops while backgrounded, the client can use the job ID to recover completed audio from disk
 
 ## Data Storage & Privacy
 
-### Server Side (No Persistent Storage)
+### Server Side
 
-- **No database**: Server is stateless
-- **Uploaded files**: Deleted immediately after text extraction
-- **Logging**: Server logs requests and errors to an in-memory ring buffer (last 500 entries), exportable via the UI for debugging. No persistent log files on disk.
+- **Desktop (FastAPI)**: Stateless — no persistent storage. Uploaded files are deleted immediately after text extraction. Logs go to an in-memory ring buffer (last 500 entries), exportable via the UI.
+- **Android (NanoHTTPD)**: Maintains per-generation job directories at `{filesDir}/tts_jobs/{jobId}/`. Each job directory holds `audio.aac` (the complete generated audio) and `timing.json`. Jobs are automatically deleted 2 hours after completion and purged on server restart. This disk persistence is what allows recovery after WebView stream drops.
 
 ### Client Side (All Local)
 
@@ -183,6 +187,18 @@ The app runs on Android using the **same SvelteKit web app** in a WebView, backe
 │  No external network. Fully offline.    │
 └─────────────────────────────────────────┘
 ```
+
+### Reliable Generation on Android
+
+Android throttles WebView JavaScript when the app is backgrounded, which can silently kill an in-progress HTTP stream. To handle this, the Android server uses a **job-based architecture**:
+
+1. Each `/api/tts/stream` request creates a `TtsJob` and immediately sends `JOB:{id}` to the client.
+2. The generation thread writes audio chunks to disk **before** streaming them to the client.
+3. If the stream drops, the generation continues writing to disk uninterrupted.
+4. The client detects the stream error, then polls `/api/tts/jobs/{id}/status` until the job completes.
+5. The client fetches the complete audio from `/api/tts/jobs/{id}/audio` and timing from `/api/tts/jobs/{id}/timing`.
+
+The cancel button in the UI (both in `GenerationProgress.svelte` and `AudioPlayer.svelte`) sends `POST /api/tts/jobs/{id}/cancel` to the server, which sets a cancellation flag that the generation thread checks between chunks.
 
 Run `./android/copy-webapp.sh` to bundle the web app, then open `android/` in Android Studio and run on your device. On first launch it downloads the Kokoro model (~95MB).
 
@@ -245,10 +261,9 @@ Yes! Kokoro supports custom voice training. You can:
 
 ### What happens if the app crashes mid-generation?
 
-- Browser receives partial audio
-- Browser shows warning if audio seems incomplete
-- User can regenerate from the same text
-- No data loss
+**Desktop**: The browser receives partial audio. The user can regenerate from the same text.
+
+**Android**: If the WebView HTTP stream drops (e.g., Android throttled the WebView while backgrounded), the Kotlin generation thread continues writing audio to disk. The client automatically polls the job status and recovers the complete audio when generation finishes — no user action needed. If the entire Android process is killed, the job is lost and the user must regenerate.
 
 ### Why is generation slower for long texts?
 

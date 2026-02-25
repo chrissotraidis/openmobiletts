@@ -39,31 +39,48 @@ python run.py
 
 ## Streaming Protocol Design
 
-The TTS endpoint uses a custom streaming protocol that interleaves text metadata with binary audio data:
+The TTS endpoint uses a length-prefixed framing protocol that interleaves text metadata with binary audio data:
 
 ```
-TIMING:{"text":"Hello world","start":0.0,"end":1.2}\n
-<MP3 bytes>
-TIMING:{"text":"How are you","start":1.2,"end":2.5}\n
-<MP3 bytes>
+JOB:{id}\n                                         (Android only — job ID for recovery)
+CHUNKS:{total}\n                                   (total chunk count for progress display)
+TIMING:{"text":"Hello world","start":0.0,"end":1.2,"chunk_index":0,"starts_paragraph":true}\n
+AUDIO:{length}\n
+<{length} bytes of audio>
+TIMING:{"text":"How are you","start":1.2,"end":2.5,"chunk_index":1,"starts_paragraph":false}\n
+AUDIO:{length}\n
+<{length} bytes of audio>
 ...
 ```
 
+The `JOB:` line is only emitted by the Android NanoHTTPD server. The desktop FastAPI server emits `CHUNKS:` and the `TIMING:`/`AUDIO:` pairs, but no `JOB:` line.
+
 ### Why this design?
 
-1. **Single HTTP response** — No WebSockets, no polling, just one `GET` request
+1. **Single HTTP response** — No WebSockets, no polling, just one `POST` request
 2. **Progressive playback** — Client can start playing before all audio is generated
 3. **Text synchronization** — Timing metadata enables sentence highlighting during playback
-4. **Binary-safe** — MP3 data is sent as raw bytes (no base64 bloat)
+4. **Binary-safe** — Audio data length is declared before binary bytes (no base64 bloat)
 5. **Interruptible** — Client can abort the fetch to cancel generation
+6. **Recoverable (Android)** — `JOB:` line gives the client a handle to recover audio from disk if the stream drops
 
 ### Client parsing
 
-The client uses a binary-safe streaming parser:
-- Scans the byte stream for `TIMING:` markers
-- Extracts JSON metadata as text
-- Collects remaining bytes as MP3 audio
-- Concatenates all audio chunks into a single `Blob` for playback
+The client uses a binary-safe length-prefixed parser:
+- Reads `CHUNKS:` to know the total chunk count for accurate progress
+- Reads `JOB:` to store the server job ID for possible recovery
+- When `TIMING:` is seen, parses JSON metadata
+- When `AUDIO:{length}` is seen, reads exactly `{length}` bytes of audio from the buffer
+- Concatenates audio chunks into a `Blob` for playback
+- Detects audio format (AAC vs WAV vs MP3) from the first chunk's magic bytes
+
+### Android job recovery
+
+On Android, if the HTTP stream breaks with a non-abort error, the client enters recovery mode:
+- Polls `GET /api/tts/jobs/{id}/status` every 5 seconds
+- When `status == "complete"`, fetches audio from `GET /api/tts/jobs/{id}/audio` and timing from `GET /api/tts/jobs/{id}/timing`
+- Sets up audio playback from the recovered data and caches it to IndexedDB
+- The recovery loop respects abort signals (user cancellation propagates cleanly)
 
 ## Text Processing Pipeline
 
@@ -186,6 +203,8 @@ Both platforms use the **identical SvelteKit frontend**. The only difference is 
 - **NanoHTTPD** serves static files + API endpoints on `127.0.0.1:8080`
 - **Sherpa-ONNX** for on-device TTS inference via JNI
 - **AacEncoder** — hardware-accelerated AAC encoding via MediaCodec (ADTS framing)
+- **TtsJob** — tracks each generation: writes audio chunks to `{filesDir}/tts_jobs/{jobId}/audio.aac` as they are produced, so generation survives WebView stream drops
+- **Job recovery endpoints** — `GET /api/tts/jobs/{id}/status`, `/audio`, `/timing`; `POST /api/tts/jobs/{id}/cancel`
 - **TtsService** foreground notification to keep process alive during generation
 - **Model download** on first launch (~95 MB Kokoro INT8)
 

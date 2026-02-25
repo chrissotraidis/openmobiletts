@@ -30,6 +30,7 @@ function createPlayerStore() {
 	const playbackRate = writable(1.0); // Runtime playback speed (independent of generation speed)
 	const inputText = writable('');
 	const totalChunks = writable(0); // Server-reported chunk count for accurate progress
+	const currentHistoryId = writable(null); // History entry ID currently being generated
 
 	// Generation timer (persistent across component mounts)
 	const generationStartTime = writable(null);
@@ -61,6 +62,7 @@ function createPlayerStore() {
 	let timingData = [];
 	let timeUpdateHandler = null;
 	let activeController = null; // AbortController for the current generation request
+	let activeJobId = null; // Server-side job ID for recovery if the stream drops
 	let cachedBlob = null; // Complete audio blob for download (avoids re-merging chunks)
 
 	// Detect audio format from first bytes
@@ -191,6 +193,87 @@ function createPlayerStore() {
 		activeSegmentIndex.set(found);
 	}
 
+	/**
+	 * Recover audio from a server-side job after the stream drops.
+	 * Polls job status until complete, then fetches audio + timing from disk.
+	 * @param {string} jobId - Server job ID
+	 * @param {AbortSignal} signal - AbortSignal for cancellation
+	 * @returns {{ blob: Blob, timing: Array } | null}
+	 */
+	async function recoverFromJob(jobId, signal) {
+		const POLL_INTERVAL = 5_000;
+		const MAX_WAIT = 3_600_000; // 60 minutes
+		const startTime = Date.now();
+
+		console.log(`[recovery] Starting job recovery for ${jobId}`);
+
+		while (Date.now() - startTime < MAX_WAIT) {
+			if (signal.aborted) return null;
+
+			try {
+				const statusRes = await fetch(apiUrl(`/api/tts/jobs/${jobId}/status`), { signal });
+				if (!statusRes.ok) {
+					console.warn('[recovery] Status endpoint failed:', statusRes.status);
+					return null;
+				}
+
+				const status = await statusRes.json();
+
+				// Update progress UI during recovery
+				if (status.total > 0) totalChunks.set(status.total);
+				if (status.completed > 0) {
+					// Create placeholder segments so the progress bar updates
+					const placeholders = Array.from({ length: status.completed }, (_, i) => ({
+						text: '', start: 0, end: 0, chunk_index: i,
+					}));
+					segments.set(placeholders);
+				}
+				if (window.Android?.updateGenerationProgress) {
+					window.Android.updateGenerationProgress(status.completed, status.total);
+				}
+
+				if (status.status === 'complete') {
+					console.log(`[recovery] Job ${jobId} complete, fetching audio + timing`);
+					const [audioRes, timingRes] = await Promise.all([
+						fetch(apiUrl(`/api/tts/jobs/${jobId}/audio`), { signal }),
+						fetch(apiUrl(`/api/tts/jobs/${jobId}/timing`), { signal }),
+					]);
+
+					if (!audioRes.ok || !timingRes.ok) {
+						console.warn('[recovery] Failed to fetch audio/timing:', audioRes.status, timingRes.status);
+						return null;
+					}
+
+					const blob = await audioRes.blob();
+					const timing = await timingRes.json();
+					return { blob, timing };
+				}
+
+				if (status.status === 'error') {
+					console.warn('[recovery] Job failed:', status.error);
+					return null;
+				}
+				if (status.status === 'cancelled') {
+					console.log('[recovery] Job was cancelled');
+					return null;
+				}
+
+				// Still generating — wait and poll again (cancellation-aware)
+				await new Promise((r) => {
+					const t = setTimeout(r, POLL_INTERVAL);
+					signal.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true });
+				});
+			} catch (e) {
+				if (signal.aborted) return null;
+				console.warn('[recovery] Poll error, retrying:', e.message);
+				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+			}
+		}
+
+		console.warn('[recovery] Timed out waiting for job');
+		return null;
+	}
+
 	store = {
 		state,
 		currentTime,
@@ -203,6 +286,7 @@ function createPlayerStore() {
 		playbackRate,
 		inputText,
 		totalChunks,
+		currentHistoryId,
 		generationElapsed,
 
 		/**
@@ -219,6 +303,12 @@ function createPlayerStore() {
 				activeController.abort();
 				activeController = null;
 			}
+			// Cancel the old server-side job (if any) so it doesn't
+			// keep generating to disk and wasting resources.
+			if (activeJobId) {
+				fetch(apiUrl(`/api/tts/jobs/${activeJobId}/cancel`), { method: 'POST' }).catch(() => {});
+				activeJobId = null;
+			}
 			resetAudio();
 			state.set(PlayState.GENERATING);
 			startGenerationTimer();
@@ -227,21 +317,26 @@ function createPlayerStore() {
 			speed.set(speedVal);
 			inputText.set(text);
 			errorMessage.set('');
+			currentHistoryId.set(historyId);
 			requestNotificationPermission();
 
 			// Abort controller with inactivity timeout — if no data arrives,
-			// assume the server is stuck and abort.
-			// Android: 60 min (on-device generation is slow + WebView JS is throttled when backgrounded)
+			// assume the server is stuck and abort. The client then recovers
+			// via the job endpoint (Android) or shows an error (desktop).
+			// Android: 5 min (server abandons slow streams and writes to disk,
+			//   so no data for 5 min means something is genuinely stuck)
 			// Desktop: 3 min (server should respond quickly)
 			const controller = new AbortController();
 			activeController = controller;
 			let inactivityTimer = null;
-			const INACTIVITY_TIMEOUT = isAndroid ? 3_600_000 : 180_000;
+			const INACTIVITY_TIMEOUT = isAndroid ? 300_000 : 180_000;
 
 			function resetInactivityTimer() {
 				if (inactivityTimer) clearTimeout(inactivityTimer);
 				inactivityTimer = setTimeout(() => controller.abort(), INACTIVITY_TIMEOUT);
 			}
+
+			let superseded = false;
 
 			try {
 				resetInactivityTimer();
@@ -308,6 +403,8 @@ function createPlayerStore() {
 						} else if (line.startsWith('CHUNKS:')) {
 							const total = parseInt(line.slice(7), 10);
 							if (total > 0) totalChunks.set(total);
+						} else if (line.startsWith('JOB:')) {
+							activeJobId = line.slice(4);
 						}
 					}
 				}
@@ -321,6 +418,17 @@ function createPlayerStore() {
 				// Handle any remaining buffered audio data
 				if (pendingAudioBytes > 0 && buffer.length >= pendingAudioBytes) {
 					audioChunks.push(buffer.slice(0, pendingAudioBytes));
+				}
+
+				// On Android, check if the stream was truncated (server abandoned
+				// streaming because the client was too slow). If so, throw to
+				// trigger job recovery which fetches the full audio from disk.
+				// Compare audioChunks (not timingData) since a partial enqueue
+				// could send TIMING without the matching AUDIO bytes.
+				const expectedTotal = get(totalChunks);
+				if (isAndroid && activeJobId && expectedTotal > 0 && audioChunks.length < expectedTotal) {
+					console.log(`[player] Incomplete stream: ${audioChunks.length}/${expectedTotal} audio chunks received. Recovering from job ${activeJobId}`);
+					throw new Error(`Incomplete stream: received ${audioChunks.length}/${expectedTotal} chunks`);
 				}
 
 				// Build audio blob and start playback immediately
@@ -358,6 +466,7 @@ function createPlayerStore() {
 						(err) => console.warn('Cache write failed:', err.message)
 					);
 				}
+				currentHistoryId.set(null);
 			} catch (err) {
 				// Clean up any audio resources allocated before the error
 				if (audioElement) {
@@ -370,24 +479,92 @@ function createPlayerStore() {
 					URL.revokeObjectURL(blobUrl);
 					blobUrl = null;
 				}
+				audioChunks = [];
 				cachedBlob = null;
 
 				// Don't show error if this generation was aborted by a newer one
 				if (err.name === 'AbortError' && activeController !== controller) {
+					superseded = true;
 					return; // Superseded by a new generation — silently exit
 				}
+
+				// On Android, if the stream broke but we have a job ID, the
+				// generation is still running on the Kotlin side writing to disk.
+				// Poll the job status and recover the audio when complete.
+				// This covers: network errors, incomplete streams, AND timeout
+				// aborts (inactivity timer fires but server is still generating).
+				const jobId = activeJobId;
+				if (isAndroid && jobId) {
+					console.log(`[player] Stream broke, attempting job recovery: ${jobId}`);
+					const recoveryController = new AbortController();
+					activeController = recoveryController;
+
+					try {
+						const recovered = await recoverFromJob(jobId, recoveryController.signal);
+						if (recovered && activeController === recoveryController) {
+							// Recovery succeeded — set up audio playback
+							cachedBlob = recovered.blob;
+							blobUrl = URL.createObjectURL(recovered.blob);
+							timingData = recovered.timing || [];
+							segments.set(timingData);
+
+							audioElement = new Audio(blobUrl);
+							audioElement.playbackRate = get(playbackRate);
+							timeUpdateHandler = updateActiveSegment;
+							audioElement.addEventListener('timeupdate', timeUpdateHandler);
+							audioElement.addEventListener('ended', handleEnded);
+
+							await new Promise((resolve, reject) => {
+								audioElement.addEventListener('loadedmetadata', resolve, { once: true });
+								audioElement.addEventListener('error', reject, { once: true });
+							});
+
+							duration.set(audioElement.duration);
+							notifyGenerationComplete();
+
+							if (autoPlay) {
+								audioElement.play();
+								state.set(PlayState.PLAYING);
+								window.Android?.onPlaybackStarted();
+							} else {
+								state.set(PlayState.PAUSED);
+								window.Android?.onPlaybackPaused();
+							}
+
+							// Cache the recovered audio
+							if (historyId) {
+								cacheAudio(historyId, recovered.blob, timingData).catch(
+									(e) => console.warn('Cache write failed:', e.message)
+								);
+							}
+
+							stopGenerationTimer();
+							currentHistoryId.set(null);
+							if (activeController === recoveryController) activeController = null;
+							activeJobId = null;
+							return; // Recovery complete
+						}
+					} catch (recoveryErr) {
+						if (recoveryErr.name !== 'AbortError') {
+							console.warn('[player] Job recovery failed:', recoveryErr.message);
+						}
+					}
+				}
+
 				if (err.name === 'AbortError') {
-					const timeoutMin = isAndroid ? 60 : 3;
+					const timeoutMin = isAndroid ? 5 : 3;
 					errorMessage.set(`Generation timed out — no data received for ${timeoutMin} minutes`);
 				} else {
 					errorMessage.set(err.message);
 				}
+				currentHistoryId.set(null);
 				state.set(PlayState.ERROR);
 				window.Android?.onPlaybackStopped();
 			} finally {
 				if (inactivityTimer) clearTimeout(inactivityTimer);
 				if (activeController === controller) activeController = null;
-				stopGenerationTimer();
+				// Don't stop the timer if superseded — the new generation owns it
+				if (!superseded) stopGenerationTimer();
 			}
 		},
 
@@ -489,6 +666,12 @@ function createPlayerStore() {
 				activeController.abort();
 				activeController = null;
 			}
+			// Cancel any server-side generation job
+			if (activeJobId) {
+				fetch(apiUrl(`/api/tts/jobs/${activeJobId}/cancel`), { method: 'POST' }).catch(() => {});
+				activeJobId = null;
+			}
+			currentHistoryId.set(null);
 			resetAudio();
 			state.set(PlayState.IDLE);
 			window.Android?.onPlaybackStopped();

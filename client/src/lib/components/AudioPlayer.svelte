@@ -378,24 +378,37 @@
 					</button>
 				{/if}
 
-				<!-- Download -->
-				<button
-					onclick={downloadCurrentAudio}
-					disabled={isGenerating}
-					class="p-2 text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
-					title="Download audio"
-				>
-					<Download size={14} />
-				</button>
+				<!-- Download (hidden during generation) -->
+				{#if !isGenerating}
+					<button
+						onclick={downloadCurrentAudio}
+						class="p-2 text-slate-500 hover:text-blue-400 transition-colors"
+						title="Download audio"
+					>
+						<Download size={14} />
+					</button>
+				{/if}
 
-				<!-- Stop -->
-				<button
-					onclick={() => showStopConfirm = true}
-					class="p-2 text-slate-500 hover:text-white transition-colors"
-					title="Stop and discard"
-				>
-					<Square size={14} />
-				</button>
+				<!-- Stop / Cancel -->
+				{#if isGenerating}
+					<button
+						onclick={() => playerStore.stop()}
+						class="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/15 hover:bg-red-600/25 active:bg-red-600/35 border border-red-500/20 rounded-lg text-xs font-medium text-red-400 transition-colors min-h-[44px]"
+						style="touch-action: manipulation"
+						title="Cancel generation"
+					>
+						<Square size={12} />
+						Cancel
+					</button>
+				{:else}
+					<button
+						onclick={() => showStopConfirm = true}
+						class="p-2 text-slate-500 hover:text-white transition-colors"
+						title="Stop and discard"
+					>
+						<Square size={14} />
+					</button>
+				{/if}
 			</div>
 		{/if}
 	</div>

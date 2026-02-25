@@ -77,10 +77,27 @@
 		}
 	}
 
+	// Tab switching with browser history for Android back button support
+	function switchTab(tab) {
+		if (tab === activeTab) return;
+		activeTab = tab;
+		history.pushState({ tab }, '');
+	}
+
+	function handlePopState(e) {
+		const tab = e.state?.tab;
+		if (tab && tab !== activeTab) {
+			activeTab = tab;
+		}
+	}
+
 	onMount(() => {
 		if (browser) {
 			isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 			loadVoicesAndEngines();
+			// Set initial state so back button has somewhere to return to
+			history.replaceState({ tab: 'generate' }, '');
+			window.addEventListener('popstate', handlePopState);
 		}
 	});
 
@@ -147,7 +164,7 @@
 	<!-- DESKTOP SIDEBAR -->
 	<aside class="hidden md:flex w-64 border-r border-white/5 flex-col p-4 shrink-0">
 		<button
-			onclick={() => { activeTab = 'generate'; }}
+			onclick={() => switchTab('generate')}
 			class="flex items-center gap-2 px-2 mb-8 hover:opacity-80 transition-opacity cursor-pointer"
 		>
 			<div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
@@ -160,21 +177,21 @@
 
 		<nav class="space-y-1 flex-1">
 			<button
-				onclick={() => { activeTab = 'generate'; }}
+				onclick={() => switchTab('generate')}
 				class="flex items-center gap-3 w-full px-3 py-2 rounded-lg transition-all duration-200 {activeTab === 'generate' ? 'bg-blue-600/10 text-blue-400 font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}"
 			>
 				<Plus size={18} />
 				<span class="text-sm">New Audio</span>
 			</button>
 			<button
-				onclick={() => { activeTab = 'history'; }}
+				onclick={() => switchTab('history')}
 				class="flex items-center gap-3 w-full px-3 py-2 rounded-lg transition-all duration-200 {activeTab === 'history' ? 'bg-blue-600/10 text-blue-400 font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}"
 			>
 				<History size={18} />
 				<span class="text-sm">History</span>
 			</button>
 			<button
-				onclick={() => { activeTab = 'settings'; }}
+				onclick={() => switchTab('settings')}
 				class="flex items-center gap-3 w-full px-3 py-2 rounded-lg transition-all duration-200 {activeTab === 'settings' ? 'bg-blue-600/10 text-blue-400 font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}"
 			>
 				<Settings size={18} />
@@ -203,7 +220,7 @@
 		<header class="h-14 border-b border-white/5 flex items-center justify-between px-4 md:px-8 bg-[#0a0c10]/50 backdrop-blur-md z-20 shrink-0">
 			<div class="flex items-center gap-3">
 				<button
-					onclick={() => { activeTab = 'generate'; }}
+					onclick={() => switchTab('generate')}
 					class="md:hidden w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity"
 				>
 					<Mic size={16} class="text-white" />
@@ -501,21 +518,21 @@
 		<!-- MOBILE NAVIGATION BAR -->
 		<nav class="md:hidden fixed bottom-0 left-0 right-0 h-[72px] bg-[#0d1117] border-t border-white/5 flex items-center px-2 z-40">
 			<button
-				onclick={() => { activeTab = 'generate'; }}
+				onclick={() => switchTab('generate')}
 				class="flex flex-col items-center gap-1 flex-1 py-2 transition-all duration-200 {activeTab === 'generate' ? 'text-blue-400' : 'text-slate-500'}"
 			>
 				<Plus size={20} />
 				<span class="text-[10px] font-medium">Generate</span>
 			</button>
 			<button
-				onclick={() => { activeTab = 'history'; }}
+				onclick={() => switchTab('history')}
 				class="flex flex-col items-center gap-1 flex-1 py-2 transition-all duration-200 {activeTab === 'history' ? 'text-blue-400' : 'text-slate-500'}"
 			>
 				<History size={20} />
 				<span class="text-[10px] font-medium">History</span>
 			</button>
 			<button
-				onclick={() => { activeTab = 'settings'; }}
+				onclick={() => switchTab('settings')}
 				class="flex flex-col items-center gap-1 flex-1 py-2 transition-all duration-200 {activeTab === 'settings' ? 'text-blue-400' : 'text-slate-500'}"
 			>
 				<Settings size={20} />

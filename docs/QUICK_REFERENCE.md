@@ -82,11 +82,24 @@ Open browser DevTools (F12) → Application → IndexedDB → Delete `openmobile
 
 ## Key URLs
 
+### Desktop (port 8000)
+
 | URL | What |
 |-----|------|
 | http://localhost:8000 | App (UI + API) |
 | http://localhost:8000/health | Health check |
 | http://localhost:8000/docs | API documentation |
+
+### Android (port 8080, localhost only)
+
+| URL | What |
+|-----|------|
+| http://localhost:8080 | App (UI + API) |
+| http://localhost:8080/api/health | Health check |
+| http://localhost:8080/api/tts/jobs/{id}/status | Job progress: `{id, status, completed, total, format, error}` |
+| http://localhost:8080/api/tts/jobs/{id}/audio | Complete audio file (after job is `complete`) |
+| http://localhost:8080/api/tts/jobs/{id}/timing | Timing metadata array (available mid-generation too) |
+| http://localhost:8080/api/tts/jobs/{id}/cancel | `POST` to cancel a running job |
 
 ## Configuration
 

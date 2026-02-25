@@ -19,6 +19,11 @@ import androidx.core.app.NotificationManagerCompat
  *   onPlaybackStarted()   -> update notification + wake lock
  *   onPlaybackPaused()    -> release wake lock, keep service
  *   onPlaybackStopped()   -> release wake lock + stop service
+ *
+ * The wake lock is held without a timeout so generation can run for any
+ * duration. It is explicitly released via releaseWakeLock() on pause/stop,
+ * and in onDestroy() as a safety net. If the process is killed, Android
+ * reclaims the lock automatically.
  */
 class TtsService : Service() {
 
@@ -26,7 +31,6 @@ class TtsService : Service() {
         private const val TAG = "TtsService"
         private const val NOTIFICATION_ID = 1
         private const val WAKE_LOCK_TAG = "OpenMobileTTS::Playback"
-        private const val WAKE_LOCK_TIMEOUT_MS = 30L * 60 * 1000 // 30 minutes safety ceiling
 
         /** Static reference for the JS bridge to access the running instance. */
         @Volatile
@@ -67,6 +71,8 @@ class TtsService : Service() {
     }
 
     fun updateProgress(current: Int, total: Int) {
+        // Re-acquire wake lock if somehow released — defense-in-depth
+        acquireWakeLock()
         try {
             val text = if (total > 0) "Generating speech... $current/$total chunks" else "Generating speech..."
             val notification = NotificationCompat.Builder(this, OpenMobileTtsApp.CHANNEL_PROGRESS)
@@ -95,10 +101,11 @@ class TtsService : Service() {
     fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        @Suppress("WakelockTimeout") // Intentionally untimed — released explicitly on pause/stop/destroy
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            acquire(WAKE_LOCK_TIMEOUT_MS)
+            acquire()
         }
-        Log.d(TAG, "Wake lock acquired (30-min timeout)")
+        Log.d(TAG, "Wake lock acquired (no timeout)")
     }
 
     fun releaseWakeLock() {

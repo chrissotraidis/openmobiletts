@@ -3,11 +3,11 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { playlistStore } from '$lib/stores/playlist';
 	import { settingsStore } from '$lib/stores/settings';
-	import { getCachedAudio, cacheAudio } from '$lib/services/audioCache';
+	import { getCachedAudio, cacheAudio, getCachedIds } from '$lib/services/audioCache';
 	import { apiUrl } from '$lib/services/api';
 	import TextDisplay from '$lib/components/TextDisplay.svelte';
-	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download, ListPlus, Check, ArrowLeft, BookOpen } from 'lucide-svelte';
-	import { onDestroy } from 'svelte';
+	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download, ListPlus, Check, ArrowLeft, BookOpen, CircleCheck, CircleDashed } from 'lucide-svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let history = $state([]);
 	let showClearModal = $state(false);
@@ -18,6 +18,8 @@
 	let playerState = $state(PlayState.IDLE);
 	let queuedIds = $state(new Set());
 	let viewingEntry = $state(null); // When set, shows reader/detail view
+	let cachedIds = $state(new Set()); // Track which entries have cached audio
+	let activeHistoryId = $state(null); // History entry currently being generated
 
 	const unsubs = [
 		historyStore.subscribe((h) => (history = h)),
@@ -25,14 +27,40 @@
 			queuedIds = new Set(items.map((e) => e.id));
 		}),
 		playerStore.state.subscribe((s) => {
+			const prev = playerState;
 			playerState = s;
 			// Clear loading state when playback starts or errors
 			if (s === PlayState.PLAYING || s === PlayState.PAUSED || s === PlayState.ERROR) {
 				loadingEntryId = null;
 			}
+			// Refresh cache status when generation completes (new audio may have been cached)
+			if (prev === PlayState.GENERATING && (s === PlayState.PLAYING || s === PlayState.PAUSED)) {
+				refreshCacheStatus();
+			}
 		}),
+		playerStore.currentHistoryId.subscribe((id) => (activeHistoryId = id)),
 	];
-	onDestroy(() => unsubs.forEach((u) => u()));
+
+	async function refreshCacheStatus() {
+		cachedIds = await getCachedIds();
+	}
+
+	// Android back button / gesture support for reader view
+	function handlePopState() {
+		if (viewingEntry) {
+			viewingEntry = null;
+		}
+	}
+
+	onMount(() => {
+		refreshCacheStatus();
+		window.addEventListener('popstate', handlePopState);
+	});
+
+	onDestroy(() => {
+		unsubs.forEach((u) => u());
+		window.removeEventListener('popstate', handlePopState);
+	});
 
 	const voiceDisplayNames = {
 		af_heart: 'Heart',
@@ -49,6 +77,8 @@
 	};
 
 	function playEntry(entry) {
+		// Don't restart if this entry is already being generated
+		if (activeHistoryId === entry.id && playerState === PlayState.GENERATING) return;
 		loadingEntryId = entry.id;
 		// Uses cache if available, otherwise regenerates
 		playerStore.playFromHistory(entry, $settingsStore.autoPlay);
@@ -60,9 +90,21 @@
 
 	function openReader(entry) {
 		viewingEntry = entry;
-		// Start playback so TextDisplay has segments
-		loadingEntryId = entry.id;
-		playerStore.playFromHistory(entry, $settingsStore.autoPlay);
+		// Push browser history state so Android back button returns to the list
+		history.pushState({ tab: 'history', view: 'reader' }, '');
+
+		// Don't trigger playback if this entry is already being generated
+		if (activeHistoryId === entry.id && playerState === PlayState.GENERATING) return;
+
+		// Only auto-play if audio is cached — don't trigger expensive on-device regeneration
+		if (cachedIds.has(entry.id)) {
+			loadingEntryId = entry.id;
+			playerStore.playFromHistory(entry, $settingsStore.autoPlay);
+		}
+	}
+
+	function closeReader() {
+		viewingEntry = null;
 	}
 
 	function handleClearAll() {
@@ -78,6 +120,10 @@
 	function handleDelete() {
 		if (pendingDeleteEntry) {
 			historyStore.remove(pendingDeleteEntry.id);
+			// If we were viewing this entry, go back to the list
+			if (viewingEntry && viewingEntry.id === pendingDeleteEntry.id) {
+				viewingEntry = null;
+			}
 		}
 		showDeleteModal = false;
 		pendingDeleteEntry = null;
@@ -183,6 +229,7 @@
 
 				// Cache for future use
 				await cacheAudio(entry.id, blob, timingData);
+				refreshCacheStatus();
 			}
 
 			// Trigger download (uses native bridge on Android, blob URL on desktop)
@@ -289,7 +336,7 @@
 		<!-- Header -->
 		<div class="flex items-center gap-3">
 			<button
-				onclick={() => viewingEntry = null}
+				onclick={closeReader}
 				class="w-9 h-9 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center transition-colors"
 			>
 				<ArrowLeft size={16} class="text-slate-400" />
@@ -307,19 +354,35 @@
 			</div>
 		</div>
 
+		<!-- Cache status notice -->
+		{#if activeHistoryId === viewingEntry.id && playerState === PlayState.GENERATING}
+			<div class="flex items-center gap-2 px-3 py-2 bg-blue-500/5 border border-blue-500/15 rounded-xl">
+				<Loader2 size={14} class="text-blue-400 shrink-0 animate-spin" />
+				<p class="text-xs text-blue-400/80">Audio is being generated — check progress below</p>
+			</div>
+		{:else if !cachedIds.has(viewingEntry.id)}
+			<div class="flex items-center gap-2 px-3 py-2 bg-amber-500/5 border border-amber-500/15 rounded-xl">
+				<CircleDashed size={14} class="text-amber-400 shrink-0" />
+				<p class="text-xs text-amber-400/80">Audio not cached — playing will regenerate from text</p>
+			</div>
+		{/if}
+
 		<!-- Play / Queue / Download controls -->
 		<div class="flex items-center gap-2">
 			<button
-				onclick={() => { loadingEntryId = viewingEntry.id; playerStore.playFromHistory(viewingEntry, true); }}
-				disabled={loadingEntryId === viewingEntry.id}
+				onclick={() => playEntry(viewingEntry)}
+				disabled={loadingEntryId === viewingEntry.id || (activeHistoryId === viewingEntry.id && playerState === PlayState.GENERATING)}
 				class="btn btn-primary flex items-center gap-2 text-sm px-4 py-2.5"
 			>
-				{#if loadingEntryId === viewingEntry.id && (playerState === PlayState.GENERATING)}
+				{#if (activeHistoryId === viewingEntry.id && playerState === PlayState.GENERATING) || (loadingEntryId === viewingEntry.id && playerState === PlayState.GENERATING)}
 					<Loader2 size={14} class="animate-spin" />
 					<span>Generating...</span>
-				{:else}
+				{:else if cachedIds.has(viewingEntry.id)}
 					<Play size={14} />
 					<span>Play</span>
+				{:else}
+					<Play size={14} />
+					<span>Generate & Play</span>
 				{/if}
 			</button>
 			<button
@@ -374,18 +437,21 @@
 
 		{#each history as entry (entry.id)}
 			{@const isLoading = loadingEntryId === entry.id}
-			<div class="group p-4 bg-slate-900/40 border border-white/5 rounded-xl hover:bg-slate-900/60 transition-colors {isLoading ? 'border-blue-500/30' : ''}">
+			{@const hasCachedAudio = cachedIds.has(entry.id)}
+			{@const isGenerating = activeHistoryId === entry.id && playerState === PlayState.GENERATING}
+			<div class="group p-4 bg-slate-900/40 border border-white/5 rounded-xl hover:bg-slate-900/60 transition-colors {isLoading || isGenerating ? 'border-blue-500/30' : ''}">
 				<div class="flex items-start gap-3">
 					<!-- Play button -->
 					<button
 						onclick={() => playEntry(entry)}
-						disabled={isLoading}
-						class="w-9 h-9 bg-blue-600/10 hover:bg-blue-600 rounded-lg flex items-center justify-center transition-colors shrink-0 mt-0.5 {isLoading ? 'bg-blue-600' : ''}"
+						disabled={isLoading || isGenerating}
+						class="w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0 mt-0.5 {isLoading || isGenerating ? 'bg-blue-600' : hasCachedAudio ? 'bg-blue-600/10 hover:bg-blue-600' : 'bg-slate-700/30 hover:bg-slate-600/50'}"
+						title={isGenerating ? 'Currently generating...' : hasCachedAudio ? 'Play from cache' : 'Generate & play'}
 					>
-						{#if isLoading}
+						{#if isLoading || isGenerating}
 							<Loader2 size={14} class="text-white animate-spin" />
 						{:else}
-							<Play size={14} class="text-blue-400 group-hover:text-white ml-0.5" />
+							<Play size={14} class="{hasCachedAudio ? 'text-blue-400 group-hover:text-white' : 'text-slate-500 group-hover:text-slate-300'} ml-0.5" />
 						{/if}
 					</button>
 
@@ -395,15 +461,30 @@
 						class="flex-1 min-w-0 text-left"
 					>
 						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed">{entry.preview}</p>
-						<div class="flex items-center gap-3 mt-2">
+						<div class="flex items-center gap-3 mt-2 flex-wrap">
 							<span class="text-[10px] text-slate-500 flex items-center gap-1">
 								<Volume2 size={10} />
 								{voiceDisplayNames[entry.voice] || entry.voice}
 							</span>
 							<span class="text-[10px] text-slate-600 font-mono">{entry.speed?.toFixed(1) || '1.0'}x</span>
 							<span class="text-[10px] text-slate-600">{formatDate(entry.createdAt)}</span>
-							{#if isLoading}
+							{#if isGenerating}
+								<span class="text-[10px] text-blue-400 flex items-center gap-1">
+									<Loader2 size={10} class="animate-spin" />
+									Generating...
+								</span>
+							{:else if isLoading}
 								<span class="text-[10px] text-blue-400">Loading...</span>
+							{:else if hasCachedAudio}
+								<span class="text-[10px] text-emerald-500 flex items-center gap-1">
+									<CircleCheck size={10} />
+									Audio ready
+								</span>
+							{:else}
+								<span class="text-[10px] text-slate-600 flex items-center gap-1">
+									<CircleDashed size={10} />
+									Text only
+								</span>
 							{/if}
 						</div>
 					</button>
