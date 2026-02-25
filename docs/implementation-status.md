@@ -1,6 +1,6 @@
 # Open Mobile TTS - Implementation Status
 
-**Last Updated**: 2026-02-20
+**Last Updated**: 2026-02-25
 **Status**: ✅ Fully functional monolithic app — server, client, and Android support complete
 
 ---
@@ -68,24 +68,37 @@ No authentication. No separate processes. CORS enabled for Android WebView suppo
 **2. Audio Player (`AudioPlayer.svelte`)**
 - Bottom player bar with playback controls
 - Progress tracking and seeking
+- Visible "Cancel" button (44px touch target) during generation — sends cancel to the server-side job
+- Download button hidden during active generation
 
 **3. Text Display (`TextDisplay.svelte`)**
 - Sentence-level highlighting synchronized with audio
 
-**4. Audio History (`AudioHistory.svelte`)**
-- History list with replay and delete
+**4. Generation Progress (`GenerationProgress.svelte`)**
+- Progress bar, chunk counter, elapsed time, estimated time remaining
+- Cancel button routes through `playerStore.stop()` which also cancels the server-side job
 
-**5. Settings**
+**5. Audio History (`AudioHistory.svelte`)**
+- History list with play, queue, download, and delete
+- Cache status indicators: "Audio ready" (cached in IndexedDB) vs "Text only" (no cached audio)
+- Reader/detail view with synchronized text highlighting and Android back button support (`popstate`)
+- Opening an entry in reader mode auto-plays only if audio is cached (avoids triggering expensive on-device regeneration)
+
+**6. Settings**
 - Voice and speed persistence (localStorage)
 - Server URL configuration (for Android / remote connections)
 - Test Connection with timeout and status feedback
 - Log export
 
-**6. Stores & Services**
-- `player.js` — Audio playback state + streaming protocol parser
+**7. Stores & Services**
+- `player.js` — Audio playback state + streaming protocol parser + Android job recovery logic
+  - Parses `JOB:{id}` from stream to track the active server-side job
+  - On stream error (Android only, non-abort): polls `/api/tts/jobs/{id}/status` every 5 seconds, fetches recovered audio + timing when complete
+  - `stop()` sends `POST /api/tts/jobs/{id}/cancel` to terminate server-side generation
 - `settings.js` — Persisted user preferences (including server URL)
 - `history.js` — History refresh events
 - `api.js` — Fetch wrapper with configurable base URL for Android support
+- `audioCache.js` — IndexedDB audio cache; added `getCachedIds()` for lightweight cache status queries (returns a `Set` of all cached history IDs without loading audio data)
 
 ---
 
@@ -104,6 +117,9 @@ The app runs on Android using the **same SvelteKit web app** in a WebView, backe
 - **WebView** loads the SvelteKit build — identical UI to desktop
 - **NanoHTTPD** embedded HTTP server: API endpoints + static file serving
 - **Sherpa-ONNX** TTS engine with Kokoro INT8 model (~95 MB)
+- **Job-based generation**: each `/api/tts/stream` request creates a `TtsJob` that writes audio directly to `{filesDir}/tts_jobs/{jobId}/audio.aac`. Generation continues even if the WebView HTTP stream drops.
+- **Job recovery endpoints**: `GET /api/tts/jobs/{id}/status|audio|timing`, `POST /api/tts/jobs/{id}/cancel`
+- **Client-side recovery**: `player.js` polls job status on stream error (Android only) and recovers the completed audio automatically
 - **Foreground service** notification to keep process alive during generation
 - **Model download** on first launch
 - Run `./android/copy-webapp.sh` then open `android/` in Android Studio
@@ -144,7 +160,7 @@ openmobiletts/
 │   ├── copy-webapp.sh              Bundles SvelteKit build into assets
 │   └── app/src/main/java/com/openmobiletts/app/
 │       ├── MainActivity.kt         WebView host + model download UI
-│       ├── TtsHttpServer.kt        NanoHTTPD: API + static files
+│       ├── TtsHttpServer.kt        NanoHTTPD: API + static files + job system (TtsJob, QueueInputStream)
 │       ├── TtsManager.kt           Sherpa-ONNX wrapper (Mutex-safe init)
 │       ├── AacEncoder.kt           PCM → AAC audio (hardware MediaCodec)
 │       ├── WavEncoder.kt           PCM → WAV conversion (fallback)

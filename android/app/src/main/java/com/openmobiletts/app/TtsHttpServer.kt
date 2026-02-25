@@ -3,9 +3,13 @@ package com.openmobiletts.app
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataInputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -24,6 +28,18 @@ class TtsHttpServer(
     companion object {
         private const val TAG = "TtsHttpServer"
         const val PORT = 8080
+        private const val JOB_TTL_MS = 2 * 60 * 60 * 1000L // 2 hours
+    }
+
+    /** Active and recently completed generation jobs. */
+    private val jobs = ConcurrentHashMap<String, TtsJob>()
+
+    init {
+        // Clean up leftover job files from previous sessions
+        val jobsDir = File(context.filesDir, "tts_jobs")
+        if (jobsDir.exists()) {
+            jobsDir.deleteRecursively()
+        }
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -39,6 +55,7 @@ class TtsHttpServer(
                 uri == "/api/engine" -> handleEngine()
                 uri == "/api/engine/switch" && method == Method.POST -> handleEngineSwitch(session)
                 uri == "/api/tts/stream" && method == Method.POST -> handleTtsStream(session)
+                uri.startsWith("/api/tts/jobs/") -> handleJobRequest(session, uri)
                 uri.startsWith("/api/logs") -> handleLogs()
                 uri == "/api/documents/upload" && method == Method.POST -> handleDocumentUpload(session)
                 else -> serveStaticAsset(uri)
@@ -139,12 +156,19 @@ class TtsHttpServer(
 
     /**
      * Core TTS streaming endpoint.
-     * Splits text into sentences, generates audio for each, and streams
-     * using the TIMING/AUDIO protocol matching the Python server.
      *
-     * Uses a bounded QueueInputStream (50 entries) with backpressure:
-     * the generation thread blocks when the queue is full, preventing OOM
-     * for very long texts when the client reads slowly.
+     * Creates a background generation job that writes audio directly to disk
+     * as chunks are produced. The HTTP stream provides real-time progress,
+     * but generation continues even if the stream drops (e.g. WebView
+     * throttled when backgrounded). The client can recover the completed
+     * audio via /api/tts/jobs/{id}/audio.
+     *
+     * Stream protocol:
+     *   JOB:{id}\n              — job ID for recovery
+     *   CHUNKS:{total}\n        — total chunk count
+     *   TIMING:{json}\n         — per-chunk timing metadata
+     *   AUDIO:{length}\n        — audio byte count
+     *   {audio bytes}           — encoded audio data
      */
     private fun handleTtsStream(session: IHTTPSession): Response {
         // Parse JSON body (cap at 1MB to prevent OOM from malicious Content-Length)
@@ -174,9 +198,9 @@ class TtsHttpServer(
                 val modelDir = ModelDownloader().getModelDir(context.filesDir)
                 AppLog.i(TAG, "Initializing TTS engine from: $modelDir")
 
-                val modelFile = java.io.File("$modelDir/model.onnx")
-                val voicesFile = java.io.File("$modelDir/voices.bin")
-                val tokensFile = java.io.File("$modelDir/tokens.txt")
+                val modelFile = File("$modelDir/model.onnx")
+                val voicesFile = File("$modelDir/voices.bin")
+                val tokensFile = File("$modelDir/tokens.txt")
                 AppLog.i(TAG, "Model files: model=${modelFile.exists()} (${modelFile.length()}), voices=${voicesFile.exists()}, tokens=${tokensFile.exists()}")
 
                 if (!modelFile.exists()) {
@@ -203,44 +227,67 @@ class TtsHttpServer(
         val chunks = splitIntoSentences(text)
         AppLog.i(TAG, "Split into ${chunks.size} chunks")
 
-        // Bounded stream with backpressure: generation thread blocks when
-        // queue is full (50 entries), preventing OOM for long texts.
+        // Create a job for disk-based recovery
+        cleanupOldJobs()
+        val jobId = java.util.UUID.randomUUID().toString().take(8)
+        val jobDir = File(context.filesDir, "tts_jobs/$jobId")
+        jobDir.mkdirs()
+        val job = TtsJob(id = jobId, jobDir = jobDir, totalChunks = chunks.size)
+        jobs[jobId] = job
+        AppLog.i(TAG, "Created job $jobId with ${chunks.size} chunks")
+
+        // Bounded stream with backpressure for real-time progress
         val stream = QueueInputStream()
 
-        // Send chunk count so the client can show accurate progress
+        // Send job ID and chunk count so the client can recover if the stream drops
+        stream.enqueue("JOB:$jobId\n".toByteArray(Charsets.UTF_8))
         stream.enqueue("CHUNKS:${chunks.size}\n".toByteArray(Charsets.UTF_8))
 
-        // Generate in a background thread
+        // Generate in a background thread — writes to disk AND streams.
+        // Streaming is non-blocking: if the client is too slow (WebView
+        // backgrounded), the stream is abandoned and generation continues
+        // to disk. The client recovers via /api/tts/jobs/{id}/audio.
         Thread({
+            var audioOutputStream: FileOutputStream? = null
             try {
+                audioOutputStream = FileOutputStream(job.audioFile)
                 var cumulativeTime = 0.0
+                var aacAvailable = true
+                var streamAlive = true // False once streaming is abandoned
 
                 for ((chunkIndex, chunkText) in chunks.withIndex()) {
                     if (chunkText.isBlank()) continue
-                    if (stream.cancelled) {
-                        AppLog.i(TAG, "Stream cancelled at chunk $chunkIndex")
+                    if (job.cancelled) {
+                        AppLog.i(TAG, "Job $jobId cancelled at chunk $chunkIndex")
                         break
                     }
 
-                    AppLog.i(TAG, "Generating chunk $chunkIndex/${chunks.size}: '${chunkText.take(50)}...'")
+                    AppLog.i(TAG, "Job $jobId: generating chunk $chunkIndex/${chunks.size}: '${chunkText.take(50)}...'")
                     val samples = runBlocking {
                         ttsManager.generate(text = chunkText, sid = sid, speed = speed)
                     }
-                    AppLog.i(TAG, "Chunk $chunkIndex: got ${samples.size} samples")
+                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex got ${samples.size} samples")
 
                     if (samples.isEmpty()) {
-                        AppLog.w(TAG, "Chunk $chunkIndex returned empty samples, skipping")
+                        AppLog.w(TAG, "Job $jobId: chunk $chunkIndex returned empty samples, skipping")
                         continue
                     }
 
                     val duration = samples.size.toDouble() / TtsManager.SAMPLE_RATE
 
-                    // Encode as AAC (6x smaller than WAV) with WAV fallback
-                    val audioBytes = try {
-                        AacEncoder.encode(samples)
-                    } catch (e: Exception) {
-                        AppLog.w(TAG, "AAC encoding failed, falling back to WAV: ${e.message}")
-                        WavEncoder.encode(samples)
+                    // Encode as AAC (concatenatable ADTS frames) with WAV fallback
+                    val audioBytes: ByteArray
+                    if (aacAvailable) {
+                        audioBytes = try {
+                            AacEncoder.encode(samples)
+                        } catch (e: Exception) {
+                            AppLog.w(TAG, "Job $jobId: AAC encoding failed, falling back to WAV: ${e.message}")
+                            aacAvailable = false
+                            job.audioFormat = "audio/wav"
+                            WavEncoder.encode(samples)
+                        }
+                    } else {
+                        audioBytes = WavEncoder.encode(samples)
                     }
 
                     val timing = JSONObject().apply {
@@ -251,26 +298,181 @@ class TtsHttpServer(
                         put("starts_paragraph", chunkIndex == 0)
                     }
 
-                    stream.enqueue("TIMING:${timing}\n".toByteArray(Charsets.UTF_8))
-                    stream.enqueue("AUDIO:${audioBytes.size}\n".toByteArray(Charsets.UTF_8))
-                    stream.enqueue(audioBytes)
+                    // Always write to disk first (survives stream drops)
+                    audioOutputStream.write(audioBytes)
+                    audioOutputStream.flush()
+
+                    // Record timing
+                    job.timingEntries.add(timing)
+                    job.completedChunks = chunkIndex + 1
+
+                    // Non-blocking stream to client. If the queue is full (client
+                    // too slow / WebView throttled), abandon the stream entirely
+                    // and continue writing to disk only. The client detects the
+                    // incomplete stream and recovers via the job endpoint.
+                    if (streamAlive && !stream.cancelled) {
+                        val offered = stream.tryEnqueue("TIMING:$timing\n".toByteArray(Charsets.UTF_8))
+                                && stream.tryEnqueue("AUDIO:${audioBytes.size}\n".toByteArray(Charsets.UTF_8))
+                                && stream.tryEnqueue(audioBytes)
+                        if (!offered) {
+                            streamAlive = false
+                            AppLog.w(TAG, "Job $jobId: stream queue full at chunk $chunkIndex, " +
+                                    "continuing disk-only (client can recover via job endpoint)")
+                        }
+                    }
 
                     cumulativeTime += duration
-                    AppLog.i(TAG, "Streamed chunk $chunkIndex: ${audioBytes.size} bytes, duration=${String.format("%.2f", duration)}s")
+                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex done — ${audioBytes.size} bytes, ${String.format("%.2f", duration)}s" +
+                            if (!streamAlive || stream.cancelled) " (disk-only)" else "")
                 }
 
-                stream.finish()
-                AppLog.i(TAG, "TTS stream complete: ${chunks.size} chunks, total=${String.format("%.2f", cumulativeTime)}s")
+                audioOutputStream.close()
+                audioOutputStream = null
+
+                // Write timing data to disk (snapshot under lock to avoid ConcurrentModificationException)
+                val timingSnapshot: List<JSONObject>
+                synchronized(job.timingEntries) {
+                    timingSnapshot = ArrayList(job.timingEntries)
+                }
+                val timingJson = JSONArray(timingSnapshot)
+                job.timingFile.writeText(timingJson.toString())
+
+                if (job.cancelled) {
+                    job.status = TtsJob.Status.CANCELLED
+                    job.completedAt = System.currentTimeMillis()
+                    AppLog.i(TAG, "Job $jobId cancelled: ${job.completedChunks}/${job.totalChunks} chunks")
+                } else {
+                    job.status = TtsJob.Status.COMPLETE
+                    job.completedAt = System.currentTimeMillis()
+                    AppLog.i(TAG, "Job $jobId complete: ${job.completedChunks}/${job.totalChunks} chunks, " +
+                            "audio=${job.audioFile.length()} bytes")
+                }
+
+                // Terminate the HTTP stream. If streaming was abandoned (client
+                // too slow), cancel to free the queue; otherwise finish cleanly.
+                if (streamAlive && !stream.cancelled) {
+                    stream.finish()
+                } else {
+                    stream.cancel()
+                }
             } catch (e: Exception) {
-                AppLog.e(TAG, "TTS generation error", e)
+                AppLog.e(TAG, "Job $jobId error", e)
+                job.error = e.message
+                job.status = TtsJob.Status.ERROR
+                job.completedAt = System.currentTimeMillis()
                 stream.finishWithError(e)
+            } finally {
+                audioOutputStream?.close()
             }
-        }, "tts-generate").start()
+        }, "tts-generate-$jobId").start()
 
         return newChunkedResponse(Response.Status.OK, "application/octet-stream", stream).apply {
             addHeader("Cache-Control", "no-cache")
             addHeader("X-Content-Type-Options", "nosniff")
             addHeader("X-Accel-Buffering", "no")
+        }
+    }
+
+    // ---------- Job recovery endpoints ----------
+
+    private fun handleJobRequest(session: IHTTPSession, uri: String): Response {
+        // Parse: /api/tts/jobs/{id}/{action}
+        val parts = uri.removePrefix("/api/tts/jobs/").split("/", limit = 2)
+        val jobId = parts[0]
+        val action = parts.getOrElse(1) { "status" }
+
+        val job = jobs[jobId]
+            ?: return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"detail":"Job not found"}"""
+            )
+
+        return when (action) {
+            "status" -> handleJobStatus(job)
+            "audio" -> handleJobAudio(job)
+            "timing" -> handleJobTiming(job)
+            "cancel" -> handleJobCancel(job)
+            else -> newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"detail":"Unknown job action: $action"}"""
+            )
+        }
+    }
+
+    private fun handleJobStatus(job: TtsJob): Response {
+        val json = JSONObject().apply {
+            put("id", job.id)
+            put("status", job.status.name.lowercase())
+            put("completed", job.completedChunks)
+            put("total", job.totalChunks)
+            put("format", job.audioFormat)
+            if (job.error != null) put("error", job.error)
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json.toString())
+    }
+
+    private fun handleJobAudio(job: TtsJob): Response {
+        if (job.status != TtsJob.Status.COMPLETE) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_JSON,
+                """{"detail":"Job not complete (status: ${job.status.name.lowercase()})"}"""
+            )
+        }
+        if (!job.audioFile.exists()) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"detail":"Audio file not found on disk"}"""
+            )
+        }
+
+        val bytes = job.audioFile.readBytes()
+        return newFixedLengthResponse(
+            Response.Status.OK, job.audioFormat,
+            bytes.inputStream(), bytes.size.toLong()
+        )
+    }
+
+    private fun handleJobTiming(job: TtsJob): Response {
+        if (job.status != TtsJob.Status.COMPLETE) {
+            // Return partial timing data if still generating (snapshot under lock)
+            val snapshot: List<JSONObject>
+            synchronized(job.timingEntries) {
+                snapshot = ArrayList(job.timingEntries)
+            }
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, JSONArray(snapshot).toString())
+        }
+        if (job.timingFile.exists()) {
+            val json = job.timingFile.readText()
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
+        }
+        val snapshot: List<JSONObject>
+        synchronized(job.timingEntries) {
+            snapshot = ArrayList(job.timingEntries)
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, JSONArray(snapshot).toString())
+    }
+
+    private fun handleJobCancel(job: TtsJob): Response {
+        job.cancelled = true
+        AppLog.i(TAG, "Job ${job.id} cancel requested")
+        return newFixedLengthResponse(
+            Response.Status.OK, MIME_JSON,
+            """{"cancelled":true}"""
+        )
+    }
+
+    /** Remove jobs older than JOB_TTL_MS. */
+    private fun cleanupOldJobs() {
+        val now = System.currentTimeMillis()
+        val expired = jobs.entries.filter { (_, job) ->
+            job.status != TtsJob.Status.GENERATING &&
+                    job.completedAt > 0 &&
+                    (now - job.completedAt) > JOB_TTL_MS
+        }
+        for ((id, job) in expired) {
+            job.jobDir.deleteRecursively()
+            jobs.remove(id)
+            AppLog.d(TAG, "Cleaned up expired job $id")
         }
     }
 
@@ -451,11 +653,38 @@ class TtsHttpServer(
             "webp" -> "image/webp"
             "wav" -> "audio/wav"
             "mp3" -> "audio/mpeg"
+            "aac" -> "audio/aac"
             "txt" -> "text/plain"
             "xml" -> "application/xml"
             else -> "application/octet-stream"
         }
     }
+}
+
+/**
+ * Tracks a background TTS generation job that writes audio directly to disk.
+ * Generation continues even if the WebView HTTP stream drops — the client
+ * can recover the completed audio via /api/tts/jobs/{id}/audio.
+ */
+class TtsJob(
+    val id: String,
+    val jobDir: File,
+    val totalChunks: Int,
+) {
+    val audioFile: File = File(jobDir, "audio.aac")
+    val timingFile: File = File(jobDir, "timing.json")
+
+    @Volatile var completedChunks: Int = 0
+    @Volatile var status: Status = Status.GENERATING
+    @Volatile var cancelled: Boolean = false
+    @Volatile var error: String? = null
+    @Volatile var audioFormat: String = "audio/aac"
+    @Volatile var completedAt: Long = 0
+
+    val timingEntries: MutableList<JSONObject> =
+        java.util.Collections.synchronizedList(mutableListOf())
+
+    enum class Status { GENERATING, COMPLETE, ERROR, CANCELLED }
 }
 
 /**
@@ -489,6 +718,16 @@ private class QueueInputStream : InputStream() {
         while (!cancelled) {
             if (queue.offer(data, 500, TimeUnit.MILLISECONDS)) return
         }
+    }
+
+    /**
+     * Non-blocking enqueue — returns false if the queue is full after [timeoutMs].
+     * Used by the generation thread so it can fall back to disk-only mode
+     * instead of blocking indefinitely when the client reads too slowly.
+     */
+    fun tryEnqueue(data: ByteArray, timeoutMs: Long = 5000): Boolean {
+        if (cancelled) return false
+        return queue.offer(data, timeoutMs, TimeUnit.MILLISECONDS)
     }
 
     /** Signal that no more data will be produced. */

@@ -2,6 +2,48 @@
 
 ---
 
+## 2026-02-25 — Android Job-Based Generation + UI Improvements
+
+### Android: Job-Based Generation with Direct-to-Disk Audio (`TtsHttpServer.kt`)
+
+Replaced the simple streaming approach with a job-based architecture that survives WebView stream drops (e.g., Android throttling JS when the app is backgrounded):
+
+- **`TtsJob` class** — tracks generation state: `id`, `status` (GENERATING/COMPLETE/ERROR/CANCELLED), `completedChunks`, `totalChunks`, `audioFile`, `timingFile`, `audioFormat`, `cancelled`, `error`, `completedAt`
+- **Direct-to-disk writing** — audio chunks are written to `{filesDir}/tts_jobs/{jobId}/audio.aac` before being streamed to the client. Generation continues to disk even if the HTTP stream breaks.
+- **Stream protocol extended** — now sends `JOB:{id}\n` at the start (before `CHUNKS:`) so the client can identify the job for recovery
+- **New REST endpoints**:
+  - `GET /api/tts/jobs/{id}/status` — returns `{id, status, completed, total, format, error}`
+  - `GET /api/tts/jobs/{id}/audio` — serves the completed audio file from disk (requires `status == complete`)
+  - `GET /api/tts/jobs/{id}/timing` — returns timing metadata array (partial results available during active generation)
+  - `POST /api/tts/jobs/{id}/cancel` — sets the cancellation flag checked between chunks
+- **Job cleanup** — 2-hour TTL for completed jobs; leftover job directories purged on server restart
+- **`QueueInputStream`** — backpressure-aware bounded queue (50 entries) between the generation thread and NanoHTTPD's response stream; prevents OOM on very long texts when the client reads slowly
+- **Thread safety** — `timingEntries` uses `synchronizedList`; snapshots taken under lock before `JSONArray` construction
+
+### Client: Job Recovery (`player.js`)
+
+- Parses `JOB:{id}` from the stream protocol and stores it as `activeJobId`
+- On stream error (Android only, non-user-abort): enters recovery mode
+  - Polls `/api/tts/jobs/{id}/status` every 5 seconds (max 60 minutes)
+  - Updates progress UI with placeholder segments during recovery
+  - When job completes, fetches audio + timing from the job endpoints
+  - Sets up audio playback from recovered data and caches to IndexedDB
+- `stop()` now sends `POST /api/tts/jobs/{id}/cancel` to the server before resetting state
+- Recovery polling is abort-signal-aware (cancel propagates through poll sleeps)
+
+### Client: UI Improvements
+
+- **`GenerationProgress.svelte`** — added estimated time remaining (`~Nm Xs left`) based on average chunk duration; cancel button routes through `playerStore.stop()`
+- **`AudioPlayer.svelte`** — dedicated "Cancel" button (min 44px touch target) visible during generation; download button hidden during generation
+- **`AudioHistory.svelte`** — cache status indicators per entry ("Audio ready" / "Text only"); reader view auto-plays only when audio is cached; Android back button support via `popstate` listener; no auto-regeneration when opening an uncached entry in reader mode
+- **`+page.svelte`** — tab switching uses `history.pushState` so the Android back button navigates between tabs
+
+### Client: Audio Cache (`audioCache.js`)
+
+- Added `getCachedIds()` — lightweight query returning a `Set` of all cached history IDs using `store.getAllKeys()` (does not load audio data)
+
+---
+
 ## 2026-02-20 — v2.0.1: Comprehensive Bug Fixes and Hardening
 
 Comprehensive code review across all three components (Android, client, server) identified and fixed 40+ issues including race conditions, resource leaks, thread safety bugs, and security vulnerabilities.

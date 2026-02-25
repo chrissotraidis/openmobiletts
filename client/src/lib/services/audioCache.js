@@ -126,6 +126,24 @@ export async function getCachedAudio(historyId) {
 }
 
 /**
+ * Get all cached audio IDs (lightweight — doesn't load audio data)
+ */
+export async function getCachedIds() {
+	try {
+		const database = await initDB();
+		const transaction = database.transaction([STORE_NAME], 'readonly');
+		const store = transaction.objectStore(STORE_NAME);
+		return new Promise((resolve) => {
+			const request = store.getAllKeys();
+			request.onsuccess = () => resolve(new Set(request.result));
+			request.onerror = () => resolve(new Set());
+		});
+	} catch {
+		return new Set();
+	}
+}
+
+/**
  * Remove cached audio by history ID
  */
 export async function removeCachedAudio(historyId) {

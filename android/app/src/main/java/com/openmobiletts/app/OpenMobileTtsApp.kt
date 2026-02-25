@@ -4,7 +4,6 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import android.util.Log
 
 class OpenMobileTtsApp : Application() {
 
@@ -21,6 +20,7 @@ class OpenMobileTtsApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppLog.init(filesDir) // Initialize persistent logging FIRST
         createNotificationChannels()
         DocumentExtractor.init(this)
     }
@@ -31,34 +31,34 @@ class OpenMobileTtsApp : Application() {
 
     fun ensureServerRunning() {
         if (httpServer?.isAlive == true) {
-            Log.i(TAG, "Server already running on port $PORT")
+            AppLog.i(TAG, "Server already running on port $PORT")
             return
         }
         // Diagnostic: list webapp assets
         try {
             val topLevel = assets.list("webapp") ?: emptyArray()
-            Log.i(TAG, "webapp/ assets: ${topLevel.joinToString()}")
+            AppLog.i(TAG, "webapp/ assets: ${topLevel.joinToString()}")
             if (topLevel.contains("_app")) {
                 val appLevel = assets.list("webapp/_app") ?: emptyArray()
-                Log.i(TAG, "webapp/_app/ assets: ${appLevel.joinToString()}")
+                AppLog.i(TAG, "webapp/_app/ assets: ${appLevel.joinToString()}")
                 if (appLevel.contains("immutable")) {
                     val immLevel = assets.list("webapp/_app/immutable") ?: emptyArray()
-                    Log.i(TAG, "webapp/_app/immutable/ assets: ${immLevel.joinToString()}")
+                    AppLog.i(TAG, "webapp/_app/immutable/ assets: ${immLevel.joinToString()}")
                     if (immLevel.contains("chunks")) {
                         val chunks = assets.list("webapp/_app/immutable/chunks") ?: emptyArray()
-                        Log.i(TAG, "webapp/_app/immutable/chunks/ assets: ${chunks.joinToString()}")
+                        AppLog.i(TAG, "webapp/_app/immutable/chunks/ assets: ${chunks.joinToString()}")
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to list assets", e)
+            AppLog.e(TAG, "Failed to list assets", e)
         }
 
-        Log.i(TAG, "Starting TtsHttpServer on port $PORT...")
+        AppLog.i(TAG, "Starting TtsHttpServer on port $PORT...")
         val server = TtsHttpServer(this, ttsManager, PORT)
         server.start()
         httpServer = server
-        Log.i(TAG, "Server started, alive=${server.isAlive}")
+        AppLog.i(TAG, "Server started, alive=${server.isAlive}")
     }
 
     fun stopServer() {
