@@ -223,9 +223,8 @@ class TtsHttpServer(
             )
         }
 
-        // Split text into sentence-sized chunks
-        val chunks = splitIntoSentences(text)
-        AppLog.i(TAG, "Split into ${chunks.size} chunks")
+        // Preprocess and chunk text for TTS (normalization + paragraph-aware chunking)
+        val chunks = TextPreprocessor.process(text)
 
         // Create a job for disk-based recovery
         cleanupOldJobs()
@@ -255,18 +254,24 @@ class TtsHttpServer(
                 var aacAvailable = true
                 var streamAlive = true // False once streaming is abandoned
 
-                for ((chunkIndex, chunkText) in chunks.withIndex()) {
+                val jobStartTime = System.currentTimeMillis()
+
+                for ((chunkIndex, chunk) in chunks.withIndex()) {
+                    val chunkText = chunk.text
                     if (chunkText.isBlank()) continue
                     if (job.cancelled) {
                         AppLog.i(TAG, "Job $jobId cancelled at chunk $chunkIndex")
                         break
                     }
 
-                    AppLog.i(TAG, "Job $jobId: generating chunk $chunkIndex/${chunks.size}: '${chunkText.take(50)}...'")
+                    val preview = if (chunkText.length > 50) "${chunkText.take(50)}..." else chunkText
+                    AppLog.i(TAG, "Job $jobId: generating chunk $chunkIndex/${chunks.size}: '$preview'")
+                    val chunkStartTime = System.currentTimeMillis()
                     val samples = runBlocking {
                         ttsManager.generate(text = chunkText, sid = sid, speed = speed)
                     }
-                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex got ${samples.size} samples")
+                    val generateElapsedMs = System.currentTimeMillis() - chunkStartTime
+                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex got ${samples.size} samples in ${generateElapsedMs}ms")
 
                     if (samples.isEmpty()) {
                         AppLog.w(TAG, "Job $jobId: chunk $chunkIndex returned empty samples, skipping")
@@ -295,7 +300,7 @@ class TtsHttpServer(
                         put("start", cumulativeTime)
                         put("end", cumulativeTime + duration)
                         put("chunk_index", chunkIndex)
-                        put("starts_paragraph", chunkIndex == 0)
+                        put("starts_paragraph", chunk.startsParagraph)
                     }
 
                     // Always write to disk first (survives stream drops)
@@ -305,6 +310,11 @@ class TtsHttpServer(
                     // Record timing
                     job.timingEntries.add(timing)
                     job.completedChunks = chunkIndex + 1
+
+                    // Update notification directly from the generation thread.
+                    // This bypasses the WebView entirely — the notification stays
+                    // alive even when Android throttles the WebView in background.
+                    TtsService.instance?.updateProgress(chunkIndex + 1, chunks.size)
 
                     // Non-blocking stream to client. If the queue is full (client
                     // too slow / WebView throttled), abandon the stream entirely
@@ -322,7 +332,9 @@ class TtsHttpServer(
                     }
 
                     cumulativeTime += duration
-                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex done — ${audioBytes.size} bytes, ${String.format("%.2f", duration)}s" +
+                    val totalChunkMs = System.currentTimeMillis() - chunkStartTime
+                    AppLog.i(TAG, "Job $jobId: chunk $chunkIndex done — ${audioBytes.size} bytes, " +
+                            "${String.format("%.2f", duration)}s audio, ${totalChunkMs}ms wall" +
                             if (!streamAlive || stream.cancelled) " (disk-only)" else "")
                 }
 
@@ -337,15 +349,21 @@ class TtsHttpServer(
                 val timingJson = JSONArray(timingSnapshot)
                 job.timingFile.writeText(timingJson.toString())
 
+                val totalElapsedMs = System.currentTimeMillis() - jobStartTime
                 if (job.cancelled) {
                     job.status = TtsJob.Status.CANCELLED
                     job.completedAt = System.currentTimeMillis()
-                    AppLog.i(TAG, "Job $jobId cancelled: ${job.completedChunks}/${job.totalChunks} chunks")
+                    AppLog.i(TAG, "Job $jobId cancelled: ${job.completedChunks}/${job.totalChunks} chunks " +
+                            "in ${totalElapsedMs / 1000}s")
                 } else {
                     job.status = TtsJob.Status.COMPLETE
                     job.completedAt = System.currentTimeMillis()
                     AppLog.i(TAG, "Job $jobId complete: ${job.completedChunks}/${job.totalChunks} chunks, " +
-                            "audio=${job.audioFile.length()} bytes")
+                            "audio=${job.audioFile.length()} bytes, total=${totalElapsedMs / 1000}s")
+
+                    // Notify that generation is done — the WebView may be backgrounded,
+                    // so update the notification directly from the generation thread.
+                    TtsService.instance?.updateNotification("Audio ready — tap to listen")
                 }
 
                 // Terminate the HTTP stream. If streaming was abandoned (client
@@ -425,10 +443,10 @@ class TtsHttpServer(
             )
         }
 
-        val bytes = job.audioFile.readBytes()
+        // Stream directly from file — don't load entire audio into heap
         return newFixedLengthResponse(
             Response.Status.OK, job.audioFormat,
-            bytes.inputStream(), bytes.size.toLong()
+            java.io.FileInputStream(job.audioFile), job.audioFile.length()
         )
     }
 
@@ -476,141 +494,6 @@ class TtsHttpServer(
         }
     }
 
-    // ---------- Text chunking ----------
-
-    private fun splitIntoSentences(text: String): List<String> {
-        val sentences = mutableListOf<String>()
-        val current = StringBuilder()
-        val chars = text.toCharArray()
-        var i = 0
-
-        while (i < chars.size) {
-            current.append(chars[i])
-
-            if (chars[i] in ".!?" && current.length > 1) {
-                // Heuristic: sentence boundary if followed by space+uppercase or end of text.
-                // This avoids breaking on abbreviations like "Dr." or "U.S."
-                var j = i + 1
-                // Skip trailing quotes/brackets that belong to this sentence
-                while (j < chars.size && chars[j] in "\"')\u201D") j++
-
-                val isEnd = j >= chars.size ||
-                        (j < chars.size && chars[j] in " \t\n" &&
-                                j + 1 < chars.size && (chars[j + 1].isUpperCase() || chars[j + 1] in "\"\u201C")) ||
-                        (j < chars.size && chars[j] == '\n')
-
-                if (isEnd) {
-                    // Include any trailing quotes
-                    while (i + 1 < chars.size && chars[i + 1] in "\"')\u201D") {
-                        i++
-                        current.append(chars[i])
-                    }
-                    val trimmed = current.toString().trim()
-                    if (trimmed.isNotEmpty()) {
-                        sentences.add(trimmed)
-                        current.clear()
-                    }
-                }
-            }
-            i++
-        }
-
-        val remaining = current.toString().trim()
-        if (remaining.isNotEmpty()) {
-            sentences.add(remaining)
-        }
-
-        if (sentences.isEmpty() && text.isNotBlank()) {
-            sentences.add(text.trim())
-        }
-
-        return groupAndSplitChunks(sentences, targetLength = 200, maxLength = 300)
-    }
-
-    /**
-     * Group short sentences together (up to targetLength) and split
-     * any single sentence exceeding maxLength at clause/word boundaries.
-     */
-    private fun groupAndSplitChunks(
-        sentences: List<String>,
-        targetLength: Int,
-        maxLength: Int,
-    ): List<String> {
-        val result = mutableListOf<String>()
-        val current = StringBuilder()
-
-        for (sentence in sentences) {
-            val parts = if (sentence.length > maxLength) {
-                splitLongText(sentence, maxLength)
-            } else {
-                listOf(sentence)
-            }
-
-            for (part in parts) {
-                if (current.isEmpty()) {
-                    current.append(part)
-                } else if (current.length + part.length + 1 <= targetLength) {
-                    current.append(" ").append(part)
-                } else {
-                    result.add(current.toString())
-                    current.clear()
-                    current.append(part)
-                }
-            }
-        }
-
-        if (current.isNotEmpty()) {
-            result.add(current.toString())
-        }
-
-        return result
-    }
-
-    /**
-     * Split text exceeding maxLength at clause boundaries
-     * (commas, semicolons, colons) or word boundaries.
-     */
-    private fun splitLongText(text: String, maxLength: Int): List<String> {
-        if (text.length <= maxLength) return listOf(text)
-
-        val result = mutableListOf<String>()
-        var remaining = text
-
-        while (remaining.length > maxLength) {
-            var breakAt = -1
-
-            // Prefer clause-level breaks (comma, semicolon, colon)
-            for (i in maxLength downTo maxLength / 2) {
-                if (i < remaining.length && remaining[i] in ",;:\u2014\u2013") {
-                    breakAt = i + 1
-                    break
-                }
-            }
-
-            // Fall back to word boundary
-            if (breakAt == -1) {
-                for (i in maxLength downTo maxLength / 2) {
-                    if (i < remaining.length && remaining[i] == ' ') {
-                        breakAt = i
-                        break
-                    }
-                }
-            }
-
-            // Last resort: hard break
-            if (breakAt == -1) breakAt = maxLength
-
-            val chunk = remaining.substring(0, breakAt).trim()
-            if (chunk.isNotEmpty()) result.add(chunk)
-            val newRemaining = remaining.substring(breakAt).trim()
-            if (newRemaining.length >= remaining.length) break // safety: ensure forward progress
-            remaining = newRemaining
-        }
-
-        if (remaining.isNotEmpty()) result.add(remaining)
-
-        return result
-    }
 
     // ---------- Static file serving ----------
 
@@ -725,7 +608,7 @@ private class QueueInputStream : InputStream() {
      * Used by the generation thread so it can fall back to disk-only mode
      * instead of blocking indefinitely when the client reads too slowly.
      */
-    fun tryEnqueue(data: ByteArray, timeoutMs: Long = 5000): Boolean {
+    fun tryEnqueue(data: ByteArray, timeoutMs: Long = 200): Boolean {
         if (cancelled) return false
         return queue.offer(data, timeoutMs, TimeUnit.MILLISECONDS)
     }
@@ -733,9 +616,16 @@ private class QueueInputStream : InputStream() {
     /** Signal that no more data will be produced. */
     fun finish() {
         finished = true
-        // Use blocking offer loop since bounded queue may be full
+        // Try to enqueue sentinel, but don't block forever if the reader is dead.
+        // 30 retries × 500ms = 15 seconds max wait, then force cancel.
+        var retries = 0
         while (!queue.offer(SENTINEL, 500, TimeUnit.MILLISECONDS)) {
             if (cancelled) return
+            if (++retries > 30) {
+                AppLog.w("QueueInputStream", "finish() timed out after 15s, forcing cancel")
+                cancel()
+                return
+            }
         }
     }
 
@@ -781,7 +671,7 @@ private class QueueInputStream : InputStream() {
                 continue
             }
             if (next.isEmpty()) {
-                if (finished) return -1
+                if (finished || cancelled) return -1
                 continue
             }
             current = next

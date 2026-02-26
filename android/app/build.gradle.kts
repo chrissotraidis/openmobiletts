@@ -61,6 +61,9 @@ dependencies {
     // WebView
     implementation("androidx.webkit:webkit:1.10.0")
 
+    // Media session (notification transport controls)
+    implementation("androidx.media:media:1.7.0")
+
     // Embedded HTTP server
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 

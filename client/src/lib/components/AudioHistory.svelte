@@ -460,7 +460,7 @@
 						onclick={() => openReader(entry)}
 						class="flex-1 min-w-0 text-left"
 					>
-						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed">{entry.preview}</p>
+						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed whitespace-pre-line">{entry.preview}</p>
 						<div class="flex items-center gap-3 mt-2 flex-wrap">
 							<span class="text-[10px] text-slate-500 flex items-center gap-1">
 								<Volume2 size={10} />

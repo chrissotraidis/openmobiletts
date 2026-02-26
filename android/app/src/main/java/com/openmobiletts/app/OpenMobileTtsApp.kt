@@ -34,6 +34,14 @@ class OpenMobileTtsApp : Application() {
             AppLog.i(TAG, "Server already running on port $PORT")
             return
         }
+
+        // Clean up stale server reference (process killed but not properly stopped)
+        if (httpServer != null) {
+            AppLog.w(TAG, "Stale server reference found, cleaning up")
+            try { httpServer?.stop() } catch (_: Exception) {}
+            httpServer = null
+        }
+
         // Diagnostic: list webapp assets
         try {
             val topLevel = assets.list("webapp") ?: emptyArray()
@@ -55,10 +63,20 @@ class OpenMobileTtsApp : Application() {
         }
 
         AppLog.i(TAG, "Starting TtsHttpServer on port $PORT...")
-        val server = TtsHttpServer(this, ttsManager, PORT)
-        server.start()
-        httpServer = server
-        AppLog.i(TAG, "Server started, alive=${server.isAlive}")
+        try {
+            val server = TtsHttpServer(this, ttsManager, PORT)
+            server.start()
+            httpServer = server
+            AppLog.i(TAG, "Server started, alive=${server.isAlive}")
+        } catch (e: java.net.BindException) {
+            // Port still in TIME_WAIT from a previous process — wait briefly and retry
+            AppLog.w(TAG, "Port $PORT in use, waiting 2s and retrying: ${e.message}")
+            Thread.sleep(2000)
+            val server = TtsHttpServer(this, ttsManager, PORT)
+            server.start()
+            httpServer = server
+            AppLog.i(TAG, "Server started on retry, alive=${server.isAlive}")
+        }
     }
 
     fun stopServer() {
