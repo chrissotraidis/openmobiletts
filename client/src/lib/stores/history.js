@@ -44,7 +44,7 @@ function createHistoryStore() {
 						voice: entry.voice,
 						speed: entry.speed,
 						createdAt: new Date().toISOString(),
-						preview: entry.text.slice(0, 80),
+						preview: entry.text.slice(0, 200),
 					},
 					...entries,
 				].slice(0, MAX_ENTRIES);

@@ -64,6 +64,7 @@ function createPlayerStore() {
 	let activeController = null; // AbortController for the current generation request
 	let activeJobId = null; // Server-side job ID for recovery if the stream drops
 	let cachedBlob = null; // Complete audio blob for download (avoids re-merging chunks)
+	let lastAndroidProgressUpdate = 0; // Throttle playback position updates to Android
 
 	// Detect audio format from first bytes
 	function detectAudioMime(chunks) {
@@ -182,6 +183,18 @@ function createPlayerStore() {
 		const t = audioElement.currentTime;
 		currentTime.set(t);
 
+		// Send playback position to Android notification (throttled to ~1/sec)
+		if (isAndroid && window.Android?.updatePlaybackProgress) {
+			const now = Date.now();
+			if (now - lastAndroidProgressUpdate >= 1000) {
+				lastAndroidProgressUpdate = now;
+				window.Android.updatePlaybackProgress(
+					Math.floor(t * 1000),
+					Math.floor((audioElement.duration || 0) * 1000)
+				);
+			}
+		}
+
 		const segs = timingData;
 		let found = -1;
 		for (let i = 0; i < segs.length; i++) {
@@ -201,9 +214,11 @@ function createPlayerStore() {
 	 * @returns {{ blob: Blob, timing: Array } | null}
 	 */
 	async function recoverFromJob(jobId, signal) {
-		const POLL_INTERVAL = 5_000;
+		const POLL_INTERVAL = 2_000;
 		const MAX_WAIT = 3_600_000; // 60 minutes
+		const MAX_CONSECUTIVE_ERRORS = 10; // Give up if server is unreachable
 		const startTime = Date.now();
+		let consecutiveErrors = 0;
 
 		console.log(`[recovery] Starting job recovery for ${jobId}`);
 
@@ -217,6 +232,7 @@ function createPlayerStore() {
 					return null;
 				}
 
+				consecutiveErrors = 0; // Reset on successful request
 				const status = await statusRes.json();
 
 				// Update progress UI during recovery
@@ -245,6 +261,7 @@ function createPlayerStore() {
 					}
 
 					const blob = await audioRes.blob();
+					if (signal.aborted) return null;
 					const timing = await timingRes.json();
 					return { blob, timing };
 				}
@@ -265,7 +282,12 @@ function createPlayerStore() {
 				});
 			} catch (e) {
 				if (signal.aborted) return null;
-				console.warn('[recovery] Poll error, retrying:', e.message);
+				consecutiveErrors++;
+				console.warn(`[recovery] Poll error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, e.message);
+				if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+					console.error('[recovery] Server unreachable, giving up');
+					return null;
+				}
 				await new Promise((r) => setTimeout(r, POLL_INTERVAL));
 			}
 		}
@@ -338,6 +360,20 @@ function createPlayerStore() {
 
 			let superseded = false;
 
+			// On Android, abort the stream when the app is backgrounded.
+			// The server continues writing to disk — the client recovers
+			// via the job endpoint when it returns to foreground.
+			let visibilityHandler = null;
+			if (isAndroid) {
+				visibilityHandler = () => {
+					if (document.hidden && activeController === controller) {
+						console.log('[player] App backgrounded during generation, aborting stream for job recovery');
+						controller.abort();
+					}
+				};
+				document.addEventListener('visibilitychange', visibilityHandler);
+			}
+
 			try {
 				resetInactivityTimer();
 
@@ -358,38 +394,70 @@ function createPlayerStore() {
 
 				const reader = response.body.getReader();
 				let buffer = new Uint8Array(0);
+				let bufferOffset = 0; // Read position within buffer
 				let pendingAudioBytes = 0;
+
+				// Efficient buffer append: only copies unconsumed data
+				function appendToBuffer(newData) {
+					const unconsumed = buffer.length - bufferOffset;
+					if (unconsumed === 0) {
+						// Buffer fully consumed — just replace it
+						buffer = newData;
+						bufferOffset = 0;
+					} else {
+						// Compact: copy only unconsumed bytes + new data
+						const combined = new Uint8Array(unconsumed + newData.length);
+						combined.set(buffer.subarray(bufferOffset));
+						combined.set(newData, unconsumed);
+						buffer = combined;
+						bufferOffset = 0;
+					}
+				}
+
+				function bufferRemaining() {
+					return buffer.length - bufferOffset;
+				}
+
+				function consumeBytes(n) {
+					const slice = buffer.slice(bufferOffset, bufferOffset + n);
+					bufferOffset += n;
+					return slice;
+				}
+
+				function consumeUntilNewline() {
+					for (let i = bufferOffset; i < buffer.length; i++) {
+						if (buffer[i] === 10) { // \n
+							const line = new TextDecoder().decode(buffer.subarray(bufferOffset, i));
+							bufferOffset = i + 1;
+							return line;
+						}
+					}
+					return null; // No newline found
+				}
 
 				while (true) {
 					const { done, value } = await reader.read();
 					if (done) break;
 					resetInactivityTimer();
 
-					// Append new data to buffer
-					const combined = new Uint8Array(buffer.length + value.length);
-					combined.set(buffer);
-					combined.set(value, buffer.length);
-					buffer = combined;
+					appendToBuffer(value);
 
 					// Process buffer using length-prefixed framing protocol:
-					//   CHUNKS:{total}\n        (sent once at start)
+					//   JOB:{id}\n               (sent once at start)
+					//   CHUNKS:{total}\n         (sent once at start)
 					//   TIMING:{json}\n
 					//   AUDIO:{length}\n
 					//   {exactly length bytes of audio}
-					while (buffer.length > 0) {
+					while (bufferRemaining() > 0) {
 						if (pendingAudioBytes > 0) {
-							if (buffer.length < pendingAudioBytes) break;
-							audioChunks.push(buffer.slice(0, pendingAudioBytes));
-							buffer = buffer.slice(pendingAudioBytes);
+							if (bufferRemaining() < pendingAudioBytes) break;
+							audioChunks.push(consumeBytes(pendingAudioBytes));
 							pendingAudioBytes = 0;
 							continue;
 						}
 
-						const newlineIdx = buffer.indexOf(10); // \n
-						if (newlineIdx === -1) break;
-
-						const line = new TextDecoder().decode(buffer.slice(0, newlineIdx));
-						buffer = buffer.slice(newlineIdx + 1);
+						const line = consumeUntilNewline();
+						if (line === null) break;
 
 						if (line.startsWith('TIMING:')) {
 							const timing = JSON.parse(line.slice(7));
@@ -407,6 +475,18 @@ function createPlayerStore() {
 							activeJobId = line.slice(4);
 						}
 					}
+
+					// On Android, once we have the job ID and chunk count,
+					// close the stream and switch to poll-based generation.
+					// The server continues generating to disk and the notification
+					// updates natively from the generation thread. Polling is
+					// far more reliable than streaming on mobile.
+					if (isAndroid && activeJobId && get(totalChunks) > 0) {
+						console.log(`[player] Android: closing stream, switching to poll-based generation for job ${activeJobId}`);
+						audioChunks = []; // Discard partial stream data
+						reader.cancel();
+						// reader.read() will return { done: true } on next iteration
+					}
 				}
 
 				// Stream complete — stop the inactivity timer before post-processing
@@ -416,8 +496,8 @@ function createPlayerStore() {
 				}
 
 				// Handle any remaining buffered audio data
-				if (pendingAudioBytes > 0 && buffer.length >= pendingAudioBytes) {
-					audioChunks.push(buffer.slice(0, pendingAudioBytes));
+				if (pendingAudioBytes > 0 && bufferRemaining() >= pendingAudioBytes) {
+					audioChunks.push(consumeBytes(pendingAudioBytes));
 				}
 
 				// On Android, check if the stream was truncated (server abandoned
@@ -519,6 +599,19 @@ function createPlayerStore() {
 								audioElement.addEventListener('error', reject, { once: true });
 							});
 
+							// Re-check supersession: a new generate() or stop() may have
+							// been called during the await above, replacing activeController.
+							if (activeController !== recoveryController) {
+								audioElement.pause();
+								audioElement.removeEventListener('timeupdate', timeUpdateHandler);
+								audioElement.removeEventListener('ended', handleEnded);
+								audioElement = null;
+								URL.revokeObjectURL(blobUrl);
+								blobUrl = null;
+								superseded = true;
+								return;
+							}
+
 							duration.set(audioElement.duration);
 							notifyGenerationComplete();
 
@@ -542,12 +635,20 @@ function createPlayerStore() {
 							currentHistoryId.set(null);
 							if (activeController === recoveryController) activeController = null;
 							activeJobId = null;
+							superseded = true; // prevent finally from redundant stopGenerationTimer()
 							return; // Recovery complete
 						}
 					} catch (recoveryErr) {
 						if (recoveryErr.name !== 'AbortError') {
 							console.warn('[player] Job recovery failed:', recoveryErr.message);
 						}
+					}
+
+					// If superseded during recovery (new generation started or stop
+					// called), don't override their state changes with our error.
+					if (activeController !== recoveryController) {
+						superseded = true;
+						return;
 					}
 				}
 
@@ -562,6 +663,7 @@ function createPlayerStore() {
 				window.Android?.onPlaybackStopped();
 			} finally {
 				if (inactivityTimer) clearTimeout(inactivityTimer);
+				if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
 				if (activeController === controller) activeController = null;
 				// Don't stop the timer if superseded — the new generation owns it
 				if (!superseded) stopGenerationTimer();
@@ -738,3 +840,27 @@ function createPlayerStore() {
 }
 
 export const playerStore = createPlayerStore();
+
+// Expose playback controls globally for Android notification actions.
+// When the user taps play/pause/stop in the system notification,
+// the native side evaluates JS to call these functions.
+if (typeof window !== 'undefined') {
+	window.__ttsControl = {
+		play: () => playerStore.play(),
+		pause: () => playerStore.pause(),
+		stop: () => playerStore.stop(),
+		seekTo: (ms) => playerStore.seek(ms / 1000),
+		next: () => {
+			const entry = playlistStore.advance();
+			if (entry) playerStore.playFromHistory(entry, true);
+		},
+		previous: () => {
+			const result = playlistStore.previous();
+			if (result === 'restart') {
+				playerStore.seek(0);
+			} else if (result) {
+				playerStore.playFromHistory(result, true);
+			}
+		},
+	};
+}

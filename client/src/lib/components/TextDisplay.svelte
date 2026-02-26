@@ -80,12 +80,12 @@
 
 		<div
 			bind:this={scrollContainer}
-			class="text-[15px] leading-relaxed text-slate-300"
+			class="text-[15px] leading-7 text-slate-300"
 		>
 			{#each segments as segment, segIdx}
 				{@const words = getWords(segment.text)}
 				{@const isClickable = playerState !== PlayState.GENERATING}
-				{#if segment.starts_paragraph && segIdx > 0}<br><br>{/if}<span
+				{#if segment.starts_paragraph && segIdx > 0}<div class="h-4" aria-hidden="true"></div>{/if}<span
 					data-segment={segIdx}
 					class="text-segment {segIdx === activeIndex ? 'highlighted' : ''}"
 				>{#each words as word, wordIdx}{#if word.trim().length === 0}{word}{:else}<span
@@ -107,6 +107,6 @@
 				Processing...
 			</span>
 		</div>
-		<p class="text-[15px] leading-relaxed text-slate-500">{inputText}</p>
+		<p class="text-[15px] leading-7 text-slate-500 whitespace-pre-line">{inputText}</p>
 	</div>
 {/if}

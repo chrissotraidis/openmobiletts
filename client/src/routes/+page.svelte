@@ -17,6 +17,7 @@
 	let testingConnection = $state(false);
 	let connectionStatus = $state(null); // null | 'success' | 'error'
 	let connectionMessage = $state('');
+	let playerExpanded = $state(false);
 
 	// Engine & voice state
 	let engines = $state([]);
@@ -79,12 +80,39 @@
 
 	// Tab switching with browser history for Android back button support
 	function switchTab(tab) {
+		if (playerExpanded) {
+			playerExpanded = false;
+			if (tab === activeTab) {
+				// Same tab — just close expanded and go back in history
+				if (history.state?.expanded) history.back();
+				return;
+			}
+			// Different tab — replace the expanded state with new tab
+			activeTab = tab;
+			history.replaceState({ tab }, '');
+			return;
+		}
 		if (tab === activeTab) return;
 		activeTab = tab;
 		history.pushState({ tab }, '');
 	}
 
+	function handleExpandedOpen() {
+		history.pushState({ tab: activeTab, expanded: true }, '');
+	}
+
+	function handleExpandedClose() {
+		if (history.state?.expanded) {
+			history.back();
+		}
+	}
+
 	function handlePopState(e) {
+		// If expanded view is open and we navigated back, close it
+		if (playerExpanded && !e.state?.expanded) {
+			playerExpanded = false;
+			return;
+		}
 		const tab = e.state?.tab;
 		if (tab && tab !== activeTab) {
 			activeTab = tab;
@@ -513,10 +541,10 @@
 		</div>
 
 		<!-- BOTTOM PLAYER BAR -->
-		<AudioPlayer />
+		<AudioPlayer bind:expanded={playerExpanded} onopen={handleExpandedOpen} onclose={handleExpandedClose} />
 
 		<!-- MOBILE NAVIGATION BAR -->
-		<nav class="md:hidden fixed bottom-0 left-0 right-0 h-[72px] bg-[#0d1117] border-t border-white/5 flex items-center px-2 z-40">
+		<nav class="md:hidden fixed bottom-0 left-0 right-0 h-[72px] bg-[#0d1117] border-t border-white/5 flex items-center px-2 z-[55]">
 			<button
 				onclick={() => switchTab('generate')}
 				class="flex flex-col items-center gap-1 flex-1 py-2 transition-all duration-200 {activeTab === 'generate' ? 'text-blue-400' : 'text-slate-500'}"

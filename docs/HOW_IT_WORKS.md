@@ -188,15 +188,24 @@ The app runs on Android using the **same SvelteKit web app** in a WebView, backe
 └─────────────────────────────────────────┘
 ```
 
+### Notification Media Controls (Android)
+
+During audio playback, the foreground service notification switches to a **media transport control** style. It shows position/duration text (e.g., `2:15 / 5:30`) and play/pause/stop buttons that work from the notification shade, lock screen, and Bluetooth devices. Tapping a button fires a native `PendingIntent`, which routes back to the WebView by evaluating `window.__ttsControl.play/pause/stop()` via `webView.evaluateJavascript()`.
+
+During generation the notification shows standard progress text ("Generating speech... 3/12 chunks") rather than media controls.
+
 ### Reliable Generation on Android
 
-Android throttles WebView JavaScript when the app is backgrounded, which can silently kill an in-progress HTTP stream. To handle this, the Android server uses a **job-based architecture**:
+Android throttles WebView JavaScript when the app is backgrounded, which can silently kill an in-progress HTTP stream. To handle this, the Android server uses a **job-based architecture** with a proactive stream abort:
 
 1. Each `/api/tts/stream` request creates a `TtsJob` and immediately sends `JOB:{id}` to the client.
 2. The generation thread writes audio chunks to disk **before** streaming them to the client.
-3. If the stream drops, the generation continues writing to disk uninterrupted.
-4. The client detects the stream error, then polls `/api/tts/jobs/{id}/status` until the job completes.
-5. The client fetches the complete audio from `/api/tts/jobs/{id}/audio` and timing from `/api/tts/jobs/{id}/timing`.
+3. When the app is backgrounded, `player.js` detects the `visibilitychange` event and **proactively aborts the HTTP stream**. This is faster and cleaner than waiting for Android to throttle and kill the stream passively.
+4. The generation thread is unaffected — it continues writing audio to disk with no HTTP backpressure to block it.
+5. The client enters job recovery: it polls `/api/tts/jobs/{id}/status` until the job completes.
+6. The client fetches the complete audio from `/api/tts/jobs/{id}/audio` and timing from `/api/tts/jobs/{id}/timing`.
+
+Notification progress ("Generating speech… 3/12 chunks") is updated directly from the Kotlin generation thread via `TtsService.instance?.updateProgress()`, bypassing the WebView entirely. This keeps the notification accurate even while the WebView is throttled.
 
 The cancel button in the UI (both in `GenerationProgress.svelte` and `AudioPlayer.svelte`) sends `POST /api/tts/jobs/{id}/cancel` to the server, which sets a cancellation flag that the generation thread checks between chunks.
 
@@ -217,7 +226,7 @@ openmobiletts/
 │   │   ├── tts_engine.py        # Kokoro TTS wrapper
 │   │   ├── text_preprocessor.py # Text normalization & chunking
 │   │   ├── audio_encoder.py     # MP3 encoding (pydub + ffmpeg)
-│   │   ├── document_processor.py# PDF/DOCX/TXT extraction
+│   │   ├── document_processor.py# PDF/DOCX/TXT/MD extraction
 │   │   └── config.py            # Settings & environment
 │   ├── tests/                   # Automated tests
 │   ├── requirements.txt         # Python dependencies
@@ -263,7 +272,7 @@ Yes! Kokoro supports custom voice training. You can:
 
 **Desktop**: The browser receives partial audio. The user can regenerate from the same text.
 
-**Android**: If the WebView HTTP stream drops (e.g., Android throttled the WebView while backgrounded), the Kotlin generation thread continues writing audio to disk. The client automatically polls the job status and recovers the complete audio when generation finishes — no user action needed. If the entire Android process is killed, the job is lost and the user must regenerate.
+**Android**: When the app is backgrounded during generation, `player.js` proactively aborts the HTTP stream. The Kotlin generation thread continues writing audio to disk. The client automatically polls the job status and recovers the complete audio when generation finishes — no user action needed. If the entire Android process is killed, the job is lost and the user must regenerate.
 
 ### Why is generation slower for long texts?
 

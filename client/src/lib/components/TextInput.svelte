@@ -3,7 +3,7 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
 	import { uploadDocument, fetchVoices, fetchEngines } from '$lib/services/api';
-	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu } from 'lucide-svelte';
+	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu, X } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
 	let text = $state('');
@@ -72,6 +72,9 @@
 			$settingsStore.autoPlay,
 			historyId
 		);
+
+		// Clear the input — the text is captured by generate() and in history
+		text = '';
 	}
 
 	async function handleFileUpload(event) {
@@ -112,6 +115,16 @@
 			class="input resize-none !rounded-2xl !p-4 !pr-12 !text-[15px] leading-relaxed placeholder:text-slate-600"
 		></textarea>
 
+		{#if text.length > 0 && !isBusy}
+			<button
+				onclick={() => text = ''}
+				class="absolute top-2.5 right-2.5 p-1 text-slate-600 hover:text-slate-300 rounded-md transition-colors"
+				title="Clear text"
+			>
+				<X size={14} />
+			</button>
+		{/if}
+
 		{#if text.length > 0}
 			<div class="absolute bottom-3 right-3 text-[10px] text-slate-600 font-mono">
 				{text.length} chars
@@ -145,7 +158,7 @@
 		<input
 			bind:this={fileInput}
 			type="file"
-			accept=".pdf,.docx,.txt"
+			accept=".pdf,.docx,.txt,.md"
 			onchange={handleFileUpload}
 			class="hidden"
 		/>
@@ -245,6 +258,6 @@
 	</div>
 
 	<p class="text-[10px] text-slate-600 px-1">
-		{isAndroid ? 'Supports PDF, DOCX, and TXT files.' : 'Supports PDF, DOCX, and TXT files up to 100MB. Press Ctrl+Enter to generate.'}
+		{isAndroid ? 'Supports PDF, DOCX, TXT, and Markdown files.' : 'Supports PDF, DOCX, TXT, and Markdown files up to 100MB. Press Ctrl+Enter to generate.'}
 	</p>
 </div>

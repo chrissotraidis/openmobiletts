@@ -66,6 +66,18 @@ function createPlaylistStore() {
 			return null;
 		},
 
+		/** Go to the previous track. If on the first track, returns 'restart' signal.
+		 *  Returns the entry, 'restart' (to restart current track), or null. */
+		previous() {
+			const ci = get(currentIndex);
+			if (ci < 0) return null;
+			if (ci === 0) return 'restart';
+			const current = get(items);
+			const prev = ci - 1;
+			currentIndex.set(prev);
+			return current[prev];
+		},
+
 		/** Start playing from the beginning of the queue. Returns first entry or null. */
 		start() {
 			const current = get(items);

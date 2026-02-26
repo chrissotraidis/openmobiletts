@@ -13,6 +13,11 @@ import kotlinx.coroutines.withContext
  * Wraps Sherpa-ONNX OfflineTts with suspend functions for init/generate.
  *
  * Model files must be downloaded to [modelDir] before calling [init].
+ *
+ * Thread safety: [generate] is serialized by [generateMutex] because the
+ * underlying Sherpa-ONNX OfflineTts JNI object is NOT thread-safe for
+ * concurrent calls. If a new generation starts while an old one is still
+ * running (user re-generates), the new one waits for the old to finish.
  */
 class TtsManager {
 
@@ -22,6 +27,7 @@ class TtsManager {
     }
 
     private val initMutex = Mutex()
+    private val generateMutex = Mutex()
 
     @Volatile
     private var tts: OfflineTts? = null
@@ -77,19 +83,26 @@ class TtsManager {
     /**
      * Generate speech audio for [text] using speaker [sid] at [speed].
      * Returns a FloatArray of PCM samples at [SAMPLE_RATE] Hz.
+     *
+     * Serialized by [generateMutex] — Sherpa-ONNX OfflineTts is not
+     * thread-safe for concurrent generate() calls. If a previous job's
+     * generation is still running when a new one starts, the new call
+     * waits for it to complete.
      */
     suspend fun generate(
         text: String,
         sid: Int = 3, // af_heart
         speed: Float = 1.0f,
     ): FloatArray = withContext(Dispatchers.IO) {
-        val engine = tts ?: throw IllegalStateException("TTS not initialized")
+        generateMutex.withLock {
+            val engine = tts ?: throw IllegalStateException("TTS not initialized")
 
-        AppLog.i(TAG, "Generating speech: sid=$sid, speed=$speed, text=${text.take(50)}")
-        val audio = engine.generate(text = text, sid = sid, speed = speed)
-        AppLog.i(TAG, "Generated ${audio.samples.size} samples")
+            AppLog.i(TAG, "Generating speech: sid=$sid, speed=$speed, text=${text.take(50)}")
+            val audio = engine.generate(text = text, sid = sid, speed = speed)
+            AppLog.i(TAG, "Generated ${audio.samples.size} samples")
 
-        audio.samples
+            audio.samples
+        }
     }
 
     fun release() {

@@ -113,13 +113,14 @@ Kokoro has a hard limit of **510 tokens per inference pass**. We use 175-250 to:
 
 ## Document Processing
 
-| Format | Library | Notes |
-|--------|---------|-------|
-| PDF | pymupdf4llm | Handles multi-column layouts, outputs Markdown |
-| DOCX | python-docx | Extracts paragraph text |
-| TXT | Built-in | Direct read |
+| Format | Library (Desktop) | Library (Android) | Notes |
+|--------|------------------|-------------------|-------|
+| PDF | PyMuPDF (`fitz`) | pdfbox-android | Page-by-page extraction; PyMuPDF uses plain text mode, pdfbox-android uses `PDFTextStripper` |
+| DOCX | python-docx | ZIP + SAX (zero-dependency) | Extracts paragraph text |
+| TXT | Built-in | Built-in | Direct UTF-8 read |
+| MD | Built-in + regex | Built-in + regex | Markdown syntax stripped (headers, bold/italic, links, code blocks, HTML tags, list markers) before TTS |
 
-All formats go through Markdown-to-plain-text conversion, then the standard text processing pipeline.
+All formats produce plain text that goes through the standard text processing pipeline.
 
 ## Architecture: Single-App Design
 
@@ -204,8 +205,9 @@ Both platforms use the **identical SvelteKit frontend**. The only difference is 
 - **Sherpa-ONNX** for on-device TTS inference via JNI
 - **AacEncoder** — hardware-accelerated AAC encoding via MediaCodec (ADTS framing)
 - **TtsJob** — tracks each generation: writes audio chunks to `{filesDir}/tts_jobs/{jobId}/audio.aac` as they are produced, so generation survives WebView stream drops
+- **Stream abort on background** — `player.js` listens for `visibilitychange`; when the app is backgrounded during generation the stream is proactively aborted, triggering job recovery immediately rather than waiting for Android to throttle the WebView
 - **Job recovery endpoints** — `GET /api/tts/jobs/{id}/status`, `/audio`, `/timing`; `POST /api/tts/jobs/{id}/cancel`
-- **TtsService** foreground notification to keep process alive during generation
+- **TtsService** foreground service with two modes: generation-progress notification and `MediaStyle` playback notification (play/pause/stop controls, lock screen, Bluetooth media buttons) via `MediaSessionCompat`
 - **Model download** on first launch (~95 MB Kokoro INT8)
 
 ### Build Workflow

@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 class DocumentProcessor:
     """Extract text from PDF and DOCX documents."""
 
-    SUPPORTED_FORMATS = {'.pdf', '.docx', '.txt'}
+    SUPPORTED_FORMATS = {'.pdf', '.docx', '.txt', '.md'}
 
     def extract(self, filepath: str) -> str:
         """
@@ -48,6 +48,8 @@ class DocumentProcessor:
             text = self.extract_docx(filepath)
         elif suffix == '.txt':
             text = self.extract_txt(filepath)
+        elif suffix == '.md':
+            text = self.extract_markdown(filepath)
         else:
             raise ValueError(f"Unsupported format: {suffix}")
 
@@ -130,3 +132,51 @@ class DocumentProcessor:
             text = f.read()
         logger.debug(f"TXT file: {len(text)} chars, {text.count(chr(10))} newlines")
         return text
+
+    def extract_markdown(self, filepath: str) -> str:
+        """
+        Extract text from Markdown file, stripping formatting for TTS.
+
+        Removes headers, bold/italic markers, links, images, code blocks,
+        and HTML tags while preserving readable text content.
+
+        Args:
+            filepath: Path to Markdown file
+
+        Returns:
+            Plain text suitable for speech synthesis
+        """
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+
+        # Remove fenced code blocks
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        # Remove inline code (preserve content)
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        # Remove images ![alt](url)
+        text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', text)
+        # Convert links [text](url) to just text
+        text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        # Remove header markers
+        text = re.sub(r'(?m)^#{1,6}\s+', '', text)
+        # Remove bold/italic markers
+        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+        text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
+        # Remove strikethrough
+        text = re.sub(r'~~([^~]+)~~', r'\1', text)
+        # Remove blockquote markers
+        text = re.sub(r'(?m)^>\s?', '', text)
+        # Remove horizontal rules
+        text = re.sub(r'(?m)^[-*_]{3,}\s*$', '', text)
+        # Remove list markers
+        text = re.sub(r'(?m)^\s*[-*+]\s+', '', text)
+        text = re.sub(r'(?m)^\s*\d+\.\s+', '', text)
+
+        # Clean up whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' {2,}', ' ', text)
+
+        logger.debug(f"Markdown file: {len(text)} chars after stripping")
+        return text.strip()

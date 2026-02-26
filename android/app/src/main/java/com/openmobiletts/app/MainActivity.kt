@@ -236,6 +236,7 @@ class MainActivity : AppCompatActivity() {
             settings.allowContentAccess = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
+            settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE  // Always load fresh assets
 
             // Dark background to match the app while loading
             setBackgroundColor(Color.parseColor("#0a0c10"))
@@ -298,6 +299,20 @@ class MainActivity : AppCompatActivity() {
         this.webView = webView
         setContentView(webView)
 
+        // Forward notification button presses to the WebView's player controls
+        TtsService.playbackCommandCallback = { command ->
+            runOnUiThread {
+                webView.evaluateJavascript("window.__ttsControl?.${command}()", null)
+            }
+        }
+
+        // Forward seek commands (with position in ms)
+        TtsService.seekCallback = { positionMs ->
+            runOnUiThread {
+                webView.evaluateJavascript("window.__ttsControl?.seekTo($positionMs)", null)
+            }
+        }
+
         // Handle back navigation within WebView
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -314,6 +329,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        TtsService.playbackCommandCallback = null
+        TtsService.seekCallback = null
         scope.cancel()
         webView?.destroy()
         webView = null
@@ -333,7 +350,7 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun onPlaybackStarted() {
             Log.d(TAG, "Bridge: onPlaybackStarted")
-            TtsService.start(this@MainActivity, "Playing audio...", wakeLock = true)
+            TtsService.start(this@MainActivity, "Playing audio...", wakeLock = true, playbackMode = true)
         }
 
         @JavascriptInterface
@@ -353,6 +370,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun updateGenerationProgress(current: Int, total: Int) {
             TtsService.instance?.updateProgress(current, total)
+        }
+
+        @JavascriptInterface
+        fun updatePlaybackProgress(positionMs: Int, durationMs: Int) {
+            TtsService.instance?.updatePlaybackProgress(positionMs.toLong(), durationMs.toLong())
         }
 
         @JavascriptInterface

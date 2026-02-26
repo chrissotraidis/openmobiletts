@@ -21,7 +21,7 @@ import javax.xml.parsers.SAXParserFactory
 object DocumentExtractor {
 
     private const val TAG = "DocumentExtractor"
-    private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt")
+    private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt", "md")
 
     fun init(context: Context) {
         PDFBoxResourceLoader.init(context)
@@ -37,7 +37,7 @@ object DocumentExtractor {
 
         if (ext !in SUPPORTED_EXTENSIONS) {
             throw IllegalArgumentException(
-                "Unsupported file format: .$ext. Supported formats: PDF, DOCX, TXT."
+                "Unsupported file format: .$ext. Supported formats: PDF, DOCX, TXT, MD."
             )
         }
 
@@ -45,6 +45,7 @@ object DocumentExtractor {
             "pdf" -> extractPdf(file)
             "docx" -> extractDocx(file)
             "txt" -> extractTxt(file)
+            "md" -> extractMarkdown(file)
             else -> throw IllegalArgumentException("Unsupported format: .$ext")
         }
     }
@@ -154,6 +155,43 @@ object DocumentExtractor {
 
     private fun extractTxt(file: File): String {
         return file.readText(Charsets.UTF_8)
+    }
+
+    /**
+     * Extract text from Markdown, stripping formatting syntax for TTS.
+     * Removes headers (#), bold/italic markers, links, images, code blocks,
+     * and HTML tags while preserving the readable text content.
+     */
+    private fun extractMarkdown(file: File): String {
+        val raw = file.readText(Charsets.UTF_8)
+
+        var text = raw
+            // Remove code blocks (fenced)
+            .replace(Regex("```[\\s\\S]*?```"), "")
+            // Remove inline code
+            .replace(Regex("`[^`]+`"), { it.value.trim('`') })
+            // Remove images ![alt](url)
+            .replace(Regex("!\\[([^\\]]*)\\]\\([^)]*\\)"), "$1")
+            // Convert links [text](url) to just text
+            .replace(Regex("\\[([^\\]]*)\\]\\([^)]*\\)"), "$1")
+            // Remove HTML tags
+            .replace(Regex("<[^>]+>"), "")
+            // Remove header markers
+            .replace(Regex("(?m)^#{1,6}\\s+"), "")
+            // Remove bold/italic markers
+            .replace(Regex("\\*{1,3}([^*]+)\\*{1,3}"), "$1")
+            .replace(Regex("_{1,3}([^_]+)_{1,3}"), "$1")
+            // Remove strikethrough
+            .replace(Regex("~~([^~]+)~~"), "$1")
+            // Remove blockquote markers
+            .replace(Regex("(?m)^>\\s?"), "")
+            // Remove horizontal rules
+            .replace(Regex("(?m)^[-*_]{3,}\\s*$"), "")
+            // Remove list markers (bullet and numbered)
+            .replace(Regex("(?m)^\\s*[-*+]\\s+"), "")
+            .replace(Regex("(?m)^\\s*\\d+\\.\\s+"), "")
+
+        return cleanWhitespace(text)
     }
 
     private fun cleanWhitespace(text: String): String {

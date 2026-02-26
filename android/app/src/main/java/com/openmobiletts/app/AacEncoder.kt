@@ -38,11 +38,12 @@ object AacEncoder {
         }
         val pcmBytes = pcmBuffer.array()
 
-        // Configure AAC-LC encoder
+        // Configure AAC-LC encoder — let MediaCodec choose its own input buffer
+        // size rather than requesting the full PCM size (which wastes heap for
+        // large chunks). The encoding loop handles partial writes via inputOffset.
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, CHANNELS)
         format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
         format.setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE)
-        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, pcmBytes.size)
 
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
         val output = ByteArrayOutputStream()
@@ -54,7 +55,12 @@ object AacEncoder {
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
-            while (true) {
+
+            // Safety: max iterations to prevent infinite loop on broken codecs
+            var iterations = 0
+            val maxIterations = (pcmBytes.size / 1024 + 1) * 100 // generous upper bound
+
+            while (iterations++ < maxIterations) {
                 // Feed PCM input
                 if (!inputDone) {
                     val inputIdx = codec.dequeueInputBuffer(10_000)
@@ -77,13 +83,11 @@ object AacEncoder {
                 // Drain encoded output
                 val outputIdx = codec.dequeueOutputBuffer(bufferInfo, 10_000)
                 if (outputIdx >= 0) {
-                    // Skip codec-specific data (CSD)
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                        codec.releaseOutputBuffer(outputIdx, false)
-                        continue
-                    }
+                    val isEos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    val isCsd = bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
 
-                    if (bufferInfo.size > 0) {
+                    // Write audio data (skip codec-specific config data)
+                    if (!isCsd && bufferInfo.size > 0) {
                         val outputBuffer = codec.getOutputBuffer(outputIdx)!!
                         val aacFrame = ByteArray(bufferInfo.size)
                         outputBuffer.position(bufferInfo.offset)
@@ -96,19 +100,31 @@ object AacEncoder {
 
                     codec.releaseOutputBuffer(outputIdx, false)
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                        break
-                    }
+                    // EOS check MUST be outside the size > 0 guard.
+                    // Many MediaCodec implementations send EOS as a separate
+                    // zero-size buffer. Without this fix, the loop spins forever.
+                    if (isEos) break
                 } else if (outputIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    // Format changed mid-stream — continue draining
                     continue
                 } else if (outputIdx == MediaCodec.INFO_TRY_AGAIN_LATER && inputDone) {
-                    // All input consumed but no output yet — keep polling
+                    // Codec is still processing — yield to avoid CPU spin
+                    Thread.sleep(1)
                     continue
+                } else {
+                    // Neither input nor output buffer available (both TRY_AGAIN_LATER).
+                    // Yield CPU to avoid busy-spinning at 100% while the codec processes.
+                    Thread.sleep(1)
                 }
             }
+
+            if (iterations >= maxIterations) {
+                throw IllegalStateException("AAC encoding exceeded max iterations — codec may be stuck")
+            }
         } finally {
-            codec.stop()
+            // Safe cleanup: codec.stop() can throw if configure() succeeded
+            // but start() failed, or on some Android versions after errors.
+            // Always call release() to avoid leaking hardware codec instances.
+            try { codec.stop() } catch (_: Exception) {}
             codec.release()
         }
 
