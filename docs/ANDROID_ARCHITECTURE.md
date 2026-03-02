@@ -74,7 +74,7 @@ The proactive abort on background is preferable to waiting for the stream to fai
 Only the minimum needed to run TTS on-device:
 
 | File | Purpose |
-|------|---------|
+| --- | --- |
 | `TtsManager.kt` | Wraps Sherpa-ONNX JNI, generates PCM FloatArray (coroutine Mutex for thread-safe init) |
 | `TtsHttpServer.kt` | NanoHTTPD server: API endpoints + static files + job system (1 MB body cap, cancellation-safe) |
 | `TtsJob` (in TtsHttpServer.kt) | Tracks a background generation job: id, status, completedChunks, totalChunks, audioFile, timingFile, audioFormat, cancelled, error, completedAt |
@@ -129,7 +129,7 @@ User taps notification button
 The `AndroidBridge` inner class in `MainActivity` exposes the following methods to JavaScript via `window.Android`:
 
 | Method | Called from | Purpose |
-|--------|-------------|---------|
+| --- | --- | --- |
 | `onGenerationStarted()` | `player.js` `generate()` | Start foreground service + wake lock (generation mode) |
 | `onPlaybackStarted()` | `player.js` `play()` / after generation | Switch notification to media controls mode + wake lock |
 | `onPlaybackPaused()` | `player.js` `pause()` | Release wake lock; update notification to paused state |
@@ -179,7 +179,7 @@ cd android && ./gradlew assembleDebug
 The NanoHTTPD server implements the same endpoints as the Python FastAPI server, plus additional job recovery endpoints that exist only on Android:
 
 | Endpoint | Desktop (Python) | Android (Kotlin) |
-|----------|-----------------|-------------------|
+| --- | --- | --- |
 | `GET /api/voices` | From Kokoro/Sherpa engine | From VoiceRegistry |
 | `GET /api/health` | FastAPI | NanoHTTPD |
 | `GET /api/engines` | Multiple engines | Single (sherpa-onnx) |
@@ -207,7 +207,7 @@ The web client's `new Audio(blobUrl)` plays both formats natively. The streaming
 ## Key Design Decisions
 
 | Decision | Choice | Reasoning |
-|----------|--------|-----------|
+| --- | --- | --- |
 | UI approach | WebView | One source of truth, zero duplication |
 | HTTP server | NanoHTTPD | Lightweight, proven on Android, streaming support |
 | Audio format | AAC (ADTS) | Hardware MediaCodec encoding, ~6x smaller than WAV, no external libs |
