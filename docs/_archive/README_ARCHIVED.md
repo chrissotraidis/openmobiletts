@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. The documentation index has been replaced by Arnold's feature-based structure. See `docs/overview.md` and `docs/status.md` for the current project overview.**
+
+---
+
 # Documentation Index
 
 ## For Users

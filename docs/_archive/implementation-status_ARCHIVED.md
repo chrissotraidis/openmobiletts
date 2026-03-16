@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. Implementation status is now tracked in `docs/status.md` using Arnold's feature-based structure.**
+
+---
+
 # Open Mobile TTS - Implementation Status
 
 **Last Updated**: 2026-02-25

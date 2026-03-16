@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. It describes the old Capacitor-based architecture which has been replaced. See `docs/android-app/android-app-overview.md` for the current Android architecture.**
+
+---
+
 # Android App Guide
 
 ## Overview

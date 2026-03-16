@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. The v2 implementation is complete. See `docs/android-app/android-app-overview.md` for current architecture and `docs/status.md` for project status.**
+
+---
+
 # Implementation Plan: Android WebView + Native TTS Bridge (v2)
 
 ## Overview
