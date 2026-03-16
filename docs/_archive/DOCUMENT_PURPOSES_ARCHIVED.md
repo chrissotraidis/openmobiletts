@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. The documentation structure has been reorganized using Arnold (feature-based docs). See `docs/ABOUT.md` for the current documentation structure.**
+
+---
+
 # Documentation Structure & Purposes
 
 This document clarifies the distinct purpose of each markdown file to prevent overlap.

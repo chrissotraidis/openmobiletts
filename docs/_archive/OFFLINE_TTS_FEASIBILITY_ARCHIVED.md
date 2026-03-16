@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. It was the feasibility research that led to the current on-device architecture. The recommendation to use Sherpa-ONNX was adopted; Jetpack Compose was not. See `docs/android-app/android-app-overview.md` for what was actually built.**
+
+---
+
 # Can Kokoro TTS Run Entirely On-Device? (Pixel 9 Pro Feasibility Analysis)
 
 ## TL;DR

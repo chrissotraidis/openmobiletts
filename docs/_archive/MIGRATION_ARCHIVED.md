@@ -1,3 +1,7 @@
+**ARCHIVED 3/16/26 — This document is for historical reference only. It describes the v0.1→v0.2 migration (removing auth). The "Future: Native Android" section references Jetpack Compose which was not adopted. See `docs/android-app/android-app-overview.md` for the actual Android architecture.**
+
+---
+
 # Migration: Client-Server to Single App
 
 ## What Changed

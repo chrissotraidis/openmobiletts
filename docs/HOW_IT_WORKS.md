@@ -58,6 +58,7 @@ Open Mobile TTS is a **single-process application**. `python run.py` builds the 
 
 ## Limits & Constraints
 
+
 ### 1. Token Limit per Chunk
 
 **Kokoro has a hard limit of 510 tokens per generation.**
