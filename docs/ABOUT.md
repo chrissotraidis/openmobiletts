@@ -45,9 +45,9 @@ Rules are tagged with where they came from:
 - `/arnold:resolve` — fix drift items
 - `/arnold:recap` — start-of-session briefing
 
-## Pre-Arnold Reference Docs (Still Active)
+## Pre-Arnold Reference Docs
 
-The following pre-Arnold docs remain in `docs/` as reference material. They document the v2.0 system and are still accurate:
+Pre-Arnold docs that are still accurate and useful live in `docs/_reference/`:
 
 - `EXPANSION-PLAN-OPEN-MOBILE-VOICE.md` — v3.0 spec (canonical)
 - `technical-architecture.md` — v2.0 system architecture
@@ -62,4 +62,4 @@ The following pre-Arnold docs remain in `docs/` as reference material. They docu
 
 ## Archived Docs
 
-Stale docs that described superseded architecture (Capacitor, Jetpack Compose, old doc structure) were moved to `docs/_archive/` on 3/16/26. Each has an archive header noting it is for historical reference only.
+Stale docs that described superseded architecture (Capacitor, Jetpack Compose, old doc structure) live in `docs/_archive/`. Each has an archive header noting it is for historical reference only.

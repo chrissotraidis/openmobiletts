@@ -63,6 +63,8 @@ out/
 # IDEs
 .vscode/
 .idea/
+.obsidian/
+Untitled.canvas
 *.swp
 *.swo
 *~

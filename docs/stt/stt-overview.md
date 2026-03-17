@@ -49,7 +49,7 @@ This is the headline v3.0 feature — transforms the app from a one-way TTS tool
 ### Android (Kotlin)
 
 - **SttManager.kt** — Wraps sherpa-onnx `OfflineRecognizer` for Moonshine. Coroutine-based, Mutex-serialized, IO dispatcher (mirrors TtsManager pattern). Accepts PCM audio bytes, returns transcribed text.
-- **ModelManager.kt** — Extended from ModelDownloader.kt to download both TTS and STT models from GitHub releases. Sequential download on first launch.
+- **ModelDownloader.kt (extended)** — Extended in-place with `downloadSttModel()`, `isSttModelDownloaded()`, `getSttModelDir()` to download both TTS and STT models from GitHub releases. Sequential download on first launch.
 
 ### Desktop (Python)
 

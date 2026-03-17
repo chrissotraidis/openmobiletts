@@ -44,10 +44,23 @@ class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingWebViewPermissionRequest: android.webkit.PermissionRequest? = null
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* granted or not — generation proceeds either way */ }
+
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val pending = pendingWebViewPermissionRequest
+        pendingWebViewPermissionRequest = null
+        if (granted && pending != null) {
+            pending.grant(pending.resources)
+        } else {
+            pending?.deny()
+        }
+    }
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -75,9 +88,14 @@ class MainActivity : AppCompatActivity() {
 
         val app = application as OpenMobileTtsApp
 
-        Log.i(TAG, "onCreate: model downloaded = ${app.isModelDownloaded()}")
+        val ttsReady = app.isTtsModelDownloaded()
+        val sttReady = app.isSttModelDownloaded()
+        Log.i(TAG, "onCreate: TTS model=$ttsReady, STT model=$sttReady")
 
-        if (app.isModelDownloaded()) {
+        if (ttsReady) {
+            // TTS is the minimum requirement to start the app.
+            // STT model downloads in background if missing — STT endpoints
+            // return "model not found" until download completes.
             try {
                 app.ensureServerRunning()
                 Log.i(TAG, "Server started, alive = ${app.httpServer?.isAlive}")
@@ -85,6 +103,21 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to start server", e)
             }
             showWebView()
+
+            // Download STT model in background if missing (existing user upgrade path)
+            if (!sttReady) {
+                Log.i(TAG, "STT model missing — downloading in background")
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            ModelDownloader().downloadSttModel(filesDir)
+                        }
+                        Log.i(TAG, "STT model downloaded in background")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Background STT model download failed: ${e.message}")
+                    }
+                }
+            }
         } else {
             showDownloadUI()
         }
@@ -107,7 +140,7 @@ class MainActivity : AppCompatActivity() {
 
         // Title
         val title = TextView(this).apply {
-            text = "Open Mobile TTS"
+            text = "Open Mobile Voice"
             setTextColor(textColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             gravity = Gravity.CENTER
@@ -117,7 +150,7 @@ class MainActivity : AppCompatActivity() {
 
         // Subtitle
         val subtitle = TextView(this).apply {
-            text = "On-device text-to-speech"
+            text = "On-device voice \u2194 text"
             setTextColor(mutedColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             gravity = Gravity.CENTER
@@ -127,7 +160,7 @@ class MainActivity : AppCompatActivity() {
 
         // Status text
         val statusText = TextView(this).apply {
-            text = "Download the TTS model to get started"
+            text = "Download models to get started"
             setTextColor(mutedColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
@@ -163,7 +196,7 @@ class MainActivity : AppCompatActivity() {
 
         // Download button
         val downloadBtn = Button(this).apply {
-            text = "Download Model (~350 MB)"
+            text = "Download Models (~600 MB)"
             setTextColor(Color.WHITE)
             setBackgroundColor(accentColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -183,13 +216,15 @@ class MainActivity : AppCompatActivity() {
             downloadBtn.text = "Downloading..."
             progressBar.visibility = View.VISIBLE
             progressText.visibility = View.VISIBLE
-            statusText.text = "Downloading model..."
+            statusText.text = "Downloading TTS model..."
 
             scope.launch {
                 try {
                     val downloader = ModelDownloader()
+
+                    // Step 1: Download TTS model (~350 MB)
                     withContext(Dispatchers.IO) {
-                        downloader.download(filesDir) { bytesRead, totalBytes ->
+                        downloader.downloadTtsModel(filesDir) { bytesRead, totalBytes ->
                             val percent = if (totalBytes > 0) {
                                 ((bytesRead * 100) / totalBytes).toInt()
                             } else {
@@ -199,7 +234,34 @@ class MainActivity : AppCompatActivity() {
                                 if (percent >= 0) {
                                     progressBar.progress = percent
                                     progressText.text = "$percent%"
-                                    statusText.text = "Downloading model... ${bytesRead / 1024 / 1024} MB"
+                                    statusText.text = "Downloading TTS model... ${bytesRead / 1024 / 1024} MB"
+                                } else {
+                                    progressBar.isIndeterminate = true
+                                    progressText.text = "${bytesRead / 1024 / 1024} MB"
+                                }
+                            }
+                        }
+                    }
+
+                    // Step 2: Download STT model (~250 MB)
+                    withContext(Dispatchers.Main) {
+                        progressBar.progress = 0
+                        progressText.text = "0%"
+                        statusText.text = "Downloading STT model..."
+                    }
+
+                    withContext(Dispatchers.IO) {
+                        downloader.downloadSttModel(filesDir) { bytesRead, totalBytes ->
+                            val percent = if (totalBytes > 0) {
+                                ((bytesRead * 100) / totalBytes).toInt()
+                            } else {
+                                -1
+                            }
+                            launch(Dispatchers.Main) {
+                                if (percent >= 0) {
+                                    progressBar.progress = percent
+                                    progressText.text = "$percent%"
+                                    statusText.text = "Downloading STT model... ${bytesRead / 1024 / 1024} MB"
                                 } else {
                                     progressBar.isIndeterminate = true
                                     progressText.text = "${bytesRead / 1024 / 1024} MB"
@@ -270,6 +332,29 @@ class MainActivity : AppCompatActivity() {
                         Log.d(TAG, "WebView [${it.messageLevel()}] ${it.message()} (${it.sourceId()}:${it.lineNumber()})")
                     }
                     return true
+                }
+
+                override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                    request?.let { req ->
+                        val resources = req.resources
+                        Log.i(TAG, "WebView permission request: ${resources.joinToString()}")
+
+                        // Grant audio capture for microphone access (STT dictation)
+                        if (resources.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
+                            // Check Android runtime permission first
+                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                                == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                req.grant(resources)
+                            } else {
+                                // Request runtime permission, then grant WebView permission
+                                pendingWebViewPermissionRequest = req
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        } else {
+                            req.deny()
+                        }
+                    }
                 }
 
                 override fun onShowFileChooser(
