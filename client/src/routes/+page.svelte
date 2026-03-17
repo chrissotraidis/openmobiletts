@@ -8,8 +8,8 @@
 	import GenerationProgress from '$lib/components/GenerationProgress.svelte';
 	import { settingsStore } from '$lib/stores/settings';
 	import { playerStore } from '$lib/stores/player';
-	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine } from '$lib/services/api';
-	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Loader2, Wifi, CheckCircle, XCircle, Cpu } from 'lucide-svelte';
+	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine, fetchSttModels } from '$lib/services/api';
+	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Download, Loader2, Wifi, CheckCircle, XCircle, Cpu, HardDrive, Trash2 } from 'lucide-svelte';
 
 	let isIOS = $state(false);
 	let activeTab = $state('generate');
@@ -24,6 +24,11 @@
 	let voices = $state([]);
 	let settingsLang = $state('');
 	let switchingEngine = $state(false);
+
+	// Storage & STT settings state
+	let sttModels = $state([]);
+	let sttDownloadProgress = $state('');
+	let cleanupInterval = $state('30'); // days
 
 	const settingsLanguages = $derived(() => {
 		const map = new Map();
@@ -54,6 +59,13 @@
 			settingsLang = current ? current.language : (voices[0]?.language || '');
 		} catch {
 			// silently fail — selectors remain empty
+		}
+		// Load STT model info
+		try {
+			const result = await fetchSttModels();
+			sttModels = result.models || [];
+		} catch {
+			// STT info unavailable
 		}
 	}
 
@@ -471,6 +483,187 @@
 						</div>
 					</div>
 
+					<!-- Storage & STT -->
+					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-5">
+						<div class="flex items-center gap-2">
+							<HardDrive size={18} class="text-blue-400" />
+							<h3 class="text-lg font-semibold">Storage & Speech-to-Text</h3>
+						</div>
+
+						<!-- STT Model Status -->
+						<div class="space-y-2">
+							<span class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Speech-to-Text Model</span>
+							<p class="text-[10px] text-slate-600 px-1">Required for dictation and audio file transcription.</p>
+							{#if sttModels.length > 0}
+								{#each sttModels as model}
+									<div class="bg-slate-900/60 border border-white/10 rounded-xl px-4 py-3 space-y-2">
+										<div class="flex items-center justify-between">
+											<div>
+												<span class="text-sm text-slate-200">Moonshine v2</span>
+												<span class="text-xs text-slate-500 ml-1">({model.size_mb} MB)</span>
+											</div>
+											{#if model.active}
+												<span class="text-xs text-emerald-400 flex items-center gap-1">
+													<CheckCircle size={12} /> Ready
+												</span>
+											{:else if model.downloaded}
+												<span class="text-xs text-emerald-400/70 flex items-center gap-1">
+													<CheckCircle size={12} /> Downloaded
+												</span>
+											{:else if model.downloading}
+												<span class="text-xs text-blue-400 flex items-center gap-1">
+													<Loader2 size={12} class="animate-spin" /> Downloading...
+												</span>
+											{:else}
+												<span class="text-xs text-amber-400">Not installed</span>
+											{/if}
+										</div>
+
+										{#if model.downloading && sttDownloadProgress}
+											<div class="space-y-1">
+												<div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+													<div class="h-full bg-blue-500 rounded-full transition-all duration-300 animate-pulse" style="width: 50%"></div>
+												</div>
+												<p class="text-[10px] text-slate-500">{sttDownloadProgress}</p>
+											</div>
+										{/if}
+
+										{#if !model.downloaded && !model.active && !model.downloading}
+											<button
+												onclick={async () => {
+													model.downloading = true;
+													sttDownloadProgress = 'Starting download...';
+													sttModels = [...sttModels];
+													try {
+														// Trigger background download on server
+														const res = await fetch(apiUrl('/api/stt/models/download'), {
+															method: 'POST',
+															headers: { 'Content-Type': 'application/json' },
+															body: JSON.stringify({ model: model.name }),
+														});
+														if (!res.ok) {
+															sttDownloadProgress = 'Download failed. Try again.';
+															model.downloading = false;
+															sttModels = [...sttModels];
+															return;
+														}
+
+														const data = await res.json();
+														if (data.status === 'already_downloaded') {
+															sttDownloadProgress = 'Model already downloaded!';
+															const result = await fetchSttModels();
+															sttModels = result.models || [];
+															model.downloading = false;
+															sttModels = [...sttModels];
+															return;
+														}
+
+														// Poll for download completion
+														sttDownloadProgress = `Downloading model (~${model.size_mb} MB)... This may take a few minutes.`;
+														let attempts = 0;
+														const maxAttempts = 120; // ~10 min at 5s intervals
+														while (attempts < maxAttempts) {
+															await new Promise(r => setTimeout(r, 5000));
+															attempts++;
+															try {
+																const check = await fetchSttModels();
+																const updated = (check.models || []).find(m => m.name === model.name);
+																if (updated && (updated.downloaded || updated.active)) {
+																	sttDownloadProgress = 'Download complete! Model ready.';
+																	sttModels = check.models;
+																	model.downloading = false;
+																	sttModels = [...sttModels];
+																	setTimeout(() => { sttDownloadProgress = ''; }, 3000);
+																	return;
+																}
+																sttDownloadProgress = `Downloading... (checking ${attempts * 5}s)`;
+															} catch {
+																sttDownloadProgress = `Downloading... (check failed, retrying)`;
+															}
+														}
+														sttDownloadProgress = 'Download timed out. Check Settings later.';
+													} catch {
+														sttDownloadProgress = 'Download failed. Check your internet connection.';
+													} finally {
+														model.downloading = false;
+														sttModels = [...sttModels];
+														setTimeout(() => { sttDownloadProgress = ''; }, 5000);
+													}
+												}}
+												class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-medium transition-colors"
+											>
+												<Download size={14} />
+												Download Speech-to-Text Model ({model.size_mb} MB)
+											</button>
+										{/if}
+									</div>
+								{/each}
+							{:else}
+								<p class="text-xs text-slate-500 px-1">Checking model status...</p>
+							{/if}
+						</div>
+
+						<!-- Auto-Cleanup -->
+						<div class="space-y-2">
+							<span class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Auto-Cleanup</span>
+							<select
+								bind:value={cleanupInterval}
+								onchange={async (e) => {
+									const days = parseInt(e.target.value);
+									if (days > 0) {
+										try {
+											await fetch(apiUrl('/api/projects/cleanup'), {
+												method: 'POST',
+												headers: { 'Content-Type': 'application/json' },
+												body: JSON.stringify({ older_than_days: days }),
+											});
+										} catch { /* silent */ }
+									}
+								}}
+								class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-sm appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+							>
+								<option value="7">After 1 week</option>
+								<option value="14">After 2 weeks</option>
+								<option value="30">After 1 month</option>
+								<option value="90">After 3 months</option>
+								<option value="0">Never</option>
+							</select>
+							<p class="text-[10px] text-slate-600 px-1">
+								Projects older than this are automatically deleted on app launch.
+							</p>
+						</div>
+
+						<!-- Backup -->
+						<div class="space-y-2">
+							<span class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Backup</span>
+							<p class="text-[10px] text-slate-600 px-1">
+								Save all your project text and metadata as a backup file. Does not include audio files.
+							</p>
+							<button
+								onclick={async () => {
+									try {
+										const res = await fetch(apiUrl('/api/projects/export'));
+										if (!res.ok) throw new Error('Export failed');
+										const data = await res.json();
+										const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+										const url = URL.createObjectURL(blob);
+										const a = document.createElement('a');
+										a.href = url;
+										a.download = `omv-backup-${new Date().toISOString().slice(0,10)}.json`;
+										document.body.appendChild(a);
+										a.click();
+										document.body.removeChild(a);
+										setTimeout(() => URL.revokeObjectURL(url), 1000);
+									} catch (e) { /* silent */ }
+								}}
+								class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-white/10 rounded-xl text-sm transition-colors"
+							>
+								<FileDown size={16} />
+								Download Backup
+							</button>
+						</div>
+					</div>
+
 					<!-- About -->
 					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-4">
 						<div class="flex items-center gap-2">
@@ -480,7 +673,7 @@
 						<div class="space-y-3 text-sm text-slate-400">
 							<div class="flex justify-between">
 								<span>App</span>
-								<span class="text-slate-200">Open Mobile TTS</span>
+								<span class="text-slate-200">Open Mobile Voice</span>
 							</div>
 							<div class="flex justify-between">
 								<span>Engine</span>

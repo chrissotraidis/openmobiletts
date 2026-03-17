@@ -85,7 +85,7 @@ cp -r build android/app/src/main/assets/webapp/
 | `AudioDecoder.kt` | MediaExtractor + MediaCodec → PCM for imported audio |
 | `ExportManager.kt` | PDF via PdfDocument, MD/TXT via file I/O |
 | `ProjectStorage.kt` | JSON project CRUD + auto-cleanup |
-| `ModelManager.kt` | Extended ModelDownloader for TTS + STT models |
+| `ModelDownloader.kt (extended)` | Extended in-place for TTS + STT model downloads |
 
 ## Key References
 
@@ -95,4 +95,4 @@ cp -r build android/app/src/main/assets/webapp/
 
 ## Status
 
-🟢 Implemented (v2.0) — v3.0 additions (SttManager, AudioDecoder, ExportManager, ProjectStorage, ModelManager) are 🔵 Not Started
+🟢 Implemented (v2.0) — v3.0 additions (SttManager, AudioDecoder, ExportManager, ProjectStorage, ModelDownloader extension) are 🟡 In Progress

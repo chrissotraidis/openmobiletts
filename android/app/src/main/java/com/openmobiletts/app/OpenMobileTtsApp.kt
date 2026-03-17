@@ -15,6 +15,7 @@ class OpenMobileTtsApp : Application() {
     }
 
     val ttsManager = TtsManager()
+    val sttManager = SttManager()
     var httpServer: TtsHttpServer? = null
         private set
 
@@ -25,9 +26,16 @@ class OpenMobileTtsApp : Application() {
         DocumentExtractor.init(this)
     }
 
-    fun isModelDownloaded(): Boolean {
-        return ModelDownloader().isModelDownloaded(filesDir)
+    fun isTtsModelDownloaded(): Boolean {
+        return ModelDownloader().isTtsModelDownloaded(filesDir)
     }
+
+    fun isSttModelDownloaded(): Boolean {
+        return ModelDownloader().isSttModelDownloaded(filesDir)
+    }
+
+    /** Legacy alias */
+    fun isModelDownloaded(): Boolean = isTtsModelDownloaded()
 
     fun ensureServerRunning() {
         if (httpServer?.isAlive == true) {
@@ -62,9 +70,26 @@ class OpenMobileTtsApp : Application() {
             AppLog.e(TAG, "Failed to list assets", e)
         }
 
+        // Pre-initialize STT engine on a background thread if model is downloaded.
+        // Uses a plain Thread (not runBlocking) to avoid blocking the main thread
+        // and risking an ANR during Application.onCreate.
+        if (isSttModelDownloaded() && !sttManager.isInitialized) {
+            Thread {
+                try {
+                    val sttModelDir = ModelDownloader().getSttModelDir(filesDir)
+                    kotlinx.coroutines.runBlocking {
+                        sttManager.init(sttModelDir)
+                    }
+                    AppLog.i(TAG, "STT engine pre-initialized (background)")
+                } catch (e: Exception) {
+                    AppLog.w(TAG, "STT pre-init failed (will retry lazily): ${e.message}")
+                }
+            }.start()
+        }
+
         AppLog.i(TAG, "Starting TtsHttpServer on port $PORT...")
         try {
-            val server = TtsHttpServer(this, ttsManager, PORT)
+            val server = TtsHttpServer(this, ttsManager, sttManager, PORT)
             server.start()
             httpServer = server
             AppLog.i(TAG, "Server started, alive=${server.isAlive}")
@@ -72,7 +97,7 @@ class OpenMobileTtsApp : Application() {
             // Port still in TIME_WAIT from a previous process — wait briefly and retry
             AppLog.w(TAG, "Port $PORT in use, waiting 2s and retrying: ${e.message}")
             Thread.sleep(2000)
-            val server = TtsHttpServer(this, ttsManager, PORT)
+            val server = TtsHttpServer(this, ttsManager, sttManager, PORT)
             server.start()
             httpServer = server
             AppLog.i(TAG, "Server started on retry, alive=${server.isAlive}")
@@ -112,6 +137,7 @@ class OpenMobileTtsApp : Application() {
     override fun onTerminate() {
         stopServer()
         ttsManager.release()
+        sttManager.release()
         super.onTerminate()
     }
 

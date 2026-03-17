@@ -1,10 +1,12 @@
 """Open Mobile TTS - Single-app server (no authentication)."""
 
+import io
 import json
 import os
+import time
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,9 @@ from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
 from .tts_engine import EngineManager
 from .logging_config import setup_logging, get_logger, preview_text, export_logs_json
+from .stt_engine import SttEngine
+from .export_manager import export_pdf, export_markdown, export_plaintext
+from .project_storage import ProjectStorage
 
 # Setup logging
 setup_logging()
@@ -40,6 +45,8 @@ app.add_middleware(
 engine_manager = EngineManager()
 text_preprocessor = TextPreprocessor()
 document_processor = DocumentProcessor()
+stt_engine = SttEngine()
+project_storage = ProjectStorage()
 
 # Ensure upload directory exists
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -335,11 +342,200 @@ async def stream_document(
             os.unlink(file_path)
 
 
+# ── STT endpoints ──────────────────────────────────────────
+
+class SttTranscribeResponse(BaseModel):
+    text: str
+    duration_ms: int
+    model: str
+
+
+@app.post("/api/stt/transcribe", response_model=SttTranscribeResponse)
+async def stt_transcribe(audio: UploadFile = File(...)):
+    """Transcribe uploaded audio to text via Moonshine v2."""
+    if not stt_engine.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="STT not available — sherpa_onnx not installed",
+        )
+
+    # Save uploaded audio to temp file
+    safe_name = f"{uuid.uuid4().hex[:8]}_{audio.filename or 'audio.wav'}"
+    file_path = Path(settings.UPLOAD_DIR) / safe_name
+
+    try:
+        with open(file_path, "wb") as f:
+            while chunk := await audio.read(8192):
+                f.write(chunk)
+
+        # Lazy init STT engine
+        if not stt_engine.is_initialized:
+            # Look for model in standard locations
+            model_dir = Path.home() / ".cache" / SttEngine.MODEL_NAME
+            if not model_dir.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"STT model not found at {model_dir}. Download it first.",
+                )
+            stt_engine.init(str(model_dir))
+
+        text = stt_engine.transcribe_file(str(file_path))
+        duration_ms = 0  # TODO: extract from audio metadata
+
+        return {"text": text, "duration_ms": duration_ms, "model": "moonshine-v2-medium"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"STT transcription failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transcription failed: {e}",
+        )
+    finally:
+        if file_path.exists():
+            os.unlink(file_path)
+
+
+@app.get("/api/stt/models")
+async def stt_models():
+    """List available STT models."""
+    return {
+        "models": [
+            {
+                "name": "moonshine-v2-medium",
+                "size_mb": 250,
+                "downloaded": stt_engine.is_initialized or (Path.home() / ".cache" / SttEngine.MODEL_NAME).exists(),
+                "active": stt_engine.is_initialized,
+            }
+        ]
+    }
+
+
+# ── Export endpoints ──────────────────────────────────────
+
+class ExportRequest(BaseModel):
+    text: str
+    title: str = "Export"
+
+
+@app.post("/api/export/pdf")
+async def export_pdf_endpoint(request: ExportRequest):
+    """Export text as PDF."""
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="No text to export")
+    pdf_bytes = export_pdf(request.text, request.title)
+    sanitized = "".join(c if c.isalnum() or c in "._-" else "_" for c in request.title[:50])
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{sanitized}.pdf"'},
+    )
+
+
+@app.post("/api/export/md")
+async def export_md_endpoint(request: ExportRequest):
+    """Export text as Markdown."""
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="No text to export")
+    md_bytes = export_markdown(request.text, request.title)
+    sanitized = "".join(c if c.isalnum() or c in "._-" else "_" for c in request.title[:50])
+    return StreamingResponse(
+        io.BytesIO(md_bytes),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{sanitized}.md"'},
+    )
+
+
+@app.post("/api/export/txt")
+async def export_txt_endpoint(request: ExportRequest):
+    """Export text as plain text."""
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="No text to export")
+    txt_bytes = export_plaintext(request.text, request.title)
+    sanitized = "".join(c if c.isalnum() or c in "._-" else "_" for c in request.title[:50])
+    return StreamingResponse(
+        io.BytesIO(txt_bytes),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{sanitized}.txt"'},
+    )
+
+
+# ── Project endpoints ──────────────────────────────────────
+
+class ProjectCreateRequest(BaseModel):
+    title: str = "Untitled"
+    type: str = "tts"
+    content: str = ""
+
+
+class ProjectUpdateRequest(BaseModel):
+    content: Optional[str] = None
+    title: Optional[str] = None
+
+
+class CleanupRequest(BaseModel):
+    older_than_days: int = 30
+
+
+@app.get("/api/projects")
+async def list_projects():
+    """List all projects."""
+    return {"projects": project_storage.list_projects()}
+
+
+@app.post("/api/projects")
+async def create_project(request: ProjectCreateRequest):
+    """Create a new project."""
+    project_id = project_storage.create(request.title, request.type, request.content)
+    return {"id": project_id, "created": int(time.time() * 1000)}
+
+
+@app.get("/api/projects/export")
+async def export_all_projects():
+    """Export all project metadata as JSON."""
+    return project_storage.export_all()
+
+
+@app.post("/api/projects/cleanup")
+async def cleanup_projects(request: CleanupRequest):
+    """Delete projects older than the specified number of days."""
+    deleted = project_storage.cleanup(request.older_than_days)
+    return {"deleted_count": deleted}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """Get a project by ID."""
+    project = project_storage.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@app.put("/api/projects/{project_id}")
+async def update_project(project_id: str, request: ProjectUpdateRequest):
+    """Update a project's content and/or title."""
+    updated = project_storage.update(project_id, request.content, request.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"modified": int(time.time() * 1000)}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project."""
+    deleted = project_storage.delete(project_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"deleted": True}
+
+
 # Health check
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "2.0.0"}
+    return {"status": "healthy", "version": "3.0.0"}
 
 
 # Logs export endpoint (for mobile bug reports)

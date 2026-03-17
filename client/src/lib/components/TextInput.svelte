@@ -2,8 +2,8 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
-	import { uploadDocument, fetchVoices, fetchEngines } from '$lib/services/api';
-	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu, X } from 'lucide-svelte';
+	import { uploadDocument, fetchVoices, fetchEngines, transcribeAudio, exportDocument, fetchSttModels } from '$lib/services/api';
+	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu, X, Mic, Square, Download, AlertTriangle } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
 	let text = $state('');
@@ -15,6 +15,22 @@
 	let activeEngine = $state('');
 	let showSpeedPicker = $state(false);
 	const isAndroid = typeof window !== 'undefined' && !!window.Android;
+
+	// Export state
+	let showExportPicker = $state(false);
+	let isExporting = $state(false);
+
+	// STT model availability
+	let sttReady = $state(false);
+	let sttModelMissing = $state(false);
+
+	// STT recording state
+	let isRecording = $state(false);
+	let isTranscribing = $state(false);
+	let recordingDuration = $state(0);
+	let mediaRecorder = null;
+	let audioChunks = [];
+	let recordingTimer = null;
 
 	const speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -34,26 +50,61 @@
 		return voices.filter((v) => v.language === selectedLang);
 	});
 
-	onMount(async () => {
-		try {
-			const [v, e] = await Promise.all([fetchVoices(), fetchEngines()]);
-			voices = v;
-			const active = e.find((eng) => eng.active);
-			activeEngine = active ? active.label : '';
-			// Derive language from current voice
-			const current = voices.find((vv) => vv.name === $settingsStore.defaultVoice);
-			selectedLang = current ? current.language : (voices[0]?.language || '');
-		} catch {
-			// Fallback — keep empty, selects will be hidden
+	// Synchronous onMount — returns cleanup function correctly
+	onMount(() => {
+		// Kick off async fetch (not awaited — onMount must be sync for cleanup to work)
+		(async () => {
+			try {
+				const [v, e] = await Promise.all([fetchVoices(), fetchEngines()]);
+				voices = v;
+				const active = e.find((eng) => eng.active);
+				activeEngine = active ? active.label : '';
+				const current = voices.find((vv) => vv.name === $settingsStore.defaultVoice);
+				selectedLang = current ? current.language : (voices[0]?.language || '');
+			} catch {
+				// Fallback — keep empty, selects will be hidden
+			}
+
+			// Check STT model availability
+			try {
+				const result = await fetchSttModels();
+				const models = result.models || [];
+				const activeModel = models.find(m => m.active || m.downloaded);
+				sttReady = !!activeModel;
+				sttModelMissing = !activeModel;
+			} catch {
+				sttReady = false;
+				sttModelMissing = true;
+			}
+		})();
+
+		// Close dropdowns on outside tap
+		function handleGlobalClick(e) {
+			if (showSpeedPicker && !e.target.closest('[data-speed-picker]')) {
+				showSpeedPicker = false;
+			}
+			if (showExportPicker && !e.target.closest('[data-export-picker]')) {
+				showExportPicker = false;
+			}
 		}
+		document.addEventListener('click', handleGlobalClick);
+		return () => document.removeEventListener('click', handleGlobalClick);
 	});
 
 	let playerState = $state(PlayState.IDLE);
 	const unsubState = playerStore.state.subscribe((s) => (playerState = s));
-	onDestroy(unsubState);
+	onDestroy(() => {
+		unsubState();
+		// Clean up any active recording on component destroy
+		if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+			mediaRecorder.stream?.getTracks().forEach(t => t.stop());
+			mediaRecorder.stop();
+		}
+		clearInterval(recordingTimer);
+	});
 
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
-	const isBusy = $derived(isGenerating || isUploading);
+	const isBusy = $derived(isGenerating || isUploading || isRecording || isTranscribing || isExporting);
 
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
@@ -77,10 +128,264 @@
 		text = '';
 	}
 
+	// ── Export ──────────────────────────────────────
+
+	async function handleExport(format) {
+		if (!text.trim() || isExporting) return;
+		showExportPicker = false;
+		isExporting = true;
+		uploadError = '';
+
+		try {
+			const title = text.trim().split('\n')[0].substring(0, 50) || 'Export';
+			const blob = await exportDocument(text.trim(), title, format);
+			const sanitized = title.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 50);
+			const filename = `${sanitized}.${format}`;
+
+			const mimeTypes = { pdf: 'application/pdf', md: 'text/markdown', txt: 'text/plain' };
+
+			if (isAndroid && window.Android?.saveAudioFile) {
+				// Android WebView: use native bridge to save file
+				const reader = new FileReader();
+				reader.onload = () => {
+					const base64 = reader.result.split(',')[1];
+					window.Android.saveAudioFile(base64, filename, mimeTypes[format] || 'application/octet-stream');
+				};
+				reader.readAsDataURL(blob);
+			} else {
+				// Desktop: trigger browser download
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = filename;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
+			}
+		} catch (err) {
+			uploadError = err.message || 'Export failed';
+		} finally {
+			isExporting = false;
+		}
+	}
+
+	// ── STT Recording ──────────────────────────────
+
+	async function startRecording() {
+		if (isRecording || isGenerating) return;
+		uploadError = '';
+
+		// Check if STT model is available
+		if (sttModelMissing) {
+			uploadError = 'Speech-to-text model not installed. Go to Settings → Storage & Speech-to-Text to download it.';
+			return;
+		}
+
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
+			});
+
+			audioChunks = [];
+			recordingDuration = 0;
+
+			// Use audio/webm if available, fallback to default
+			const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+				? 'audio/webm;codecs=opus'
+				: undefined;
+
+			mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+			mediaRecorder.ondataavailable = (e) => {
+				if (e.data.size > 0) audioChunks.push(e.data);
+			};
+
+			mediaRecorder.onstop = async () => {
+				// Stop all tracks to release mic
+				stream.getTracks().forEach(t => t.stop());
+				clearInterval(recordingTimer);
+
+				if (audioChunks.length === 0 || recordingDuration < 1) {
+					uploadError = 'Recording too short. Try again.';
+					isRecording = false;
+					return;
+				}
+
+				// Convert to WAV for the server
+				const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+				isTranscribing = true;  // set before clearing isRecording to keep isBusy true
+				isRecording = false;
+
+				try {
+					// Convert to WAV (16kHz mono 16-bit PCM)
+					const wavBlob = await convertToWav(audioBlob);
+					const result = await transcribeAudio(wavBlob);
+
+					if (result.text && result.text.trim()) {
+						// Append to existing text with newline separator
+						text = text ? text + '\n' + result.text.trim() : result.text.trim();
+					} else {
+						uploadError = 'No speech detected. Try again.';
+					}
+				} catch (err) {
+					uploadError = err.message || 'Transcription failed';
+				} finally {
+					isTranscribing = false;
+				}
+			};
+
+			mediaRecorder.start(250); // collect data every 250ms
+			isRecording = true;
+
+			// Track recording duration
+			recordingTimer = setInterval(() => {
+				recordingDuration++;
+			}, 1000);
+
+		} catch (err) {
+			if (err.name === 'NotAllowedError') {
+				uploadError = 'Microphone access denied. Enable it in your browser or device settings.';
+			} else {
+				uploadError = 'Could not access microphone: ' + (err.message || 'Unknown error');
+			}
+		}
+	}
+
+	function stopRecording() {
+		clearInterval(recordingTimer);
+		if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+			mediaRecorder.stop();
+		}
+	}
+
+	/**
+	 * Convert an audio blob (webm/ogg) to WAV (16kHz mono 16-bit PCM).
+	 * Uses AudioContext to decode and resample.
+	 */
+	async function convertToWav(audioBlob) {
+		const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+		try {
+			const arrayBuffer = await audioBlob.arrayBuffer();
+			const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+			// Get mono channel (mix down if stereo)
+			const numSamples = audioBuffer.length;
+			const channelData = audioBuffer.numberOfChannels > 1
+				? mixToMono(audioBuffer)
+				: audioBuffer.getChannelData(0);
+
+			// Resample to 16kHz if needed
+			let samples = channelData;
+			if (audioBuffer.sampleRate !== 16000) {
+				const ratio = 16000 / audioBuffer.sampleRate;
+				const newLength = Math.round(numSamples * ratio);
+				samples = new Float32Array(newLength);
+				for (let i = 0; i < newLength; i++) {
+					const srcIndex = i / ratio;
+					const idx = Math.floor(srcIndex);
+					const frac = srcIndex - idx;
+					samples[i] = idx + 1 < channelData.length
+						? channelData[idx] * (1 - frac) + channelData[idx + 1] * frac
+						: channelData[idx] || 0;
+				}
+			}
+
+			// Encode as WAV
+			const wavBuffer = encodeWav(samples, 16000);
+			return new Blob([wavBuffer], { type: 'audio/wav' });
+		} finally {
+			await audioContext.close();
+		}
+	}
+
+	function mixToMono(audioBuffer) {
+		const length = audioBuffer.length;
+		const mixed = new Float32Array(length);
+		const channels = audioBuffer.numberOfChannels;
+		for (let i = 0; i < length; i++) {
+			let sum = 0;
+			for (let ch = 0; ch < channels; ch++) {
+				sum += audioBuffer.getChannelData(ch)[i];
+			}
+			mixed[i] = sum / channels;
+		}
+		return mixed;
+	}
+
+	function encodeWav(samples, sampleRate) {
+		const buffer = new ArrayBuffer(44 + samples.length * 2);
+		const view = new DataView(buffer);
+
+		// WAV header
+		writeString(view, 0, 'RIFF');
+		view.setUint32(4, 36 + samples.length * 2, true);
+		writeString(view, 8, 'WAVE');
+		writeString(view, 12, 'fmt ');
+		view.setUint32(16, 16, true); // subchunk size
+		view.setUint16(20, 1, true);  // PCM format
+		view.setUint16(22, 1, true);  // mono
+		view.setUint32(24, sampleRate, true);
+		view.setUint32(28, sampleRate * 2, true); // byte rate
+		view.setUint16(32, 2, true);  // block align
+		view.setUint16(34, 16, true); // bits per sample
+		writeString(view, 36, 'data');
+		view.setUint32(40, samples.length * 2, true);
+
+		// PCM samples
+		let offset = 44;
+		for (let i = 0; i < samples.length; i++) {
+			const s = Math.max(-1, Math.min(1, samples[i]));
+			view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+			offset += 2;
+		}
+
+		return buffer;
+	}
+
+	function writeString(view, offset, string) {
+		for (let i = 0; i < string.length; i++) {
+			view.setUint8(offset + i, string.charCodeAt(i));
+		}
+	}
+
+	function formatRecordingTime(seconds) {
+		const m = Math.floor(seconds / 60);
+		const s = seconds % 60;
+		return `${m}:${s.toString().padStart(2, '0')}`;
+	}
+
+	// ── File Upload (extended for audio) ──────────
+
 	async function handleFileUpload(event) {
 		const file = event.target.files?.[0];
 		if (!file) return;
 
+		const ext = file.name.split('.').pop()?.toLowerCase();
+		const audioExtensions = ['mp3', 'aac', 'ogg', 'wav', 'webm', 'm4a'];
+
+		if (audioExtensions.includes(ext)) {
+			// Route audio files to STT transcription
+			isTranscribing = true;
+			uploadError = '';
+			try {
+				const wavBlob = await convertToWav(file);
+				const result = await transcribeAudio(wavBlob);
+				if (result.text && result.text.trim()) {
+					text = text ? text + '\n' + result.text.trim() : result.text.trim();
+				} else {
+					uploadError = 'No speech detected in audio file.';
+				}
+			} catch (err) {
+				uploadError = err.message || 'Audio transcription failed';
+			} finally {
+				isTranscribing = false;
+				if (fileInput) fileInput.value = '';
+			}
+			return;
+		}
+
+		// Document files → existing text extraction
 		isUploading = true;
 		uploadError = '';
 
@@ -110,7 +415,7 @@
 			bind:value={text}
 			onkeydown={handleKeydown}
 			disabled={isBusy}
-			placeholder="Enter text to convert to speech, or upload a document..."
+			placeholder="Enter or dictate text, or upload a file..."
 			rows="6"
 			class="input resize-none !rounded-2xl !p-4 !pr-12 !text-[15px] leading-relaxed placeholder:text-slate-600"
 		></textarea>
@@ -138,27 +443,66 @@
 		</div>
 	{/if}
 
+	<!-- Recording indicator -->
+	{#if isRecording}
+		<div class="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+			<div class="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+			<span class="text-red-400 text-sm font-medium">Recording... {formatRecordingTime(recordingDuration)}</span>
+			<div class="flex-1"></div>
+			<button
+				onclick={stopRecording}
+				class="flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+			>
+				<Square size={14} />
+				Stop
+			</button>
+		</div>
+	{/if}
+
+	{#if isTranscribing}
+		<div class="flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
+			<Loader2 size={16} class="animate-spin text-blue-400" />
+			<span class="text-blue-400 text-sm">Transcribing audio...</span>
+		</div>
+	{/if}
+
 	<!-- Controls Row -->
 	<div class="flex flex-col sm:flex-row gap-3">
+		<!-- Mic Button -->
+		<button
+			onclick={isRecording ? stopRecording : startRecording}
+			disabled={isGenerating || isUploading || isTranscribing}
+			class="btn flex items-center justify-center gap-2 text-sm sm:w-auto {isRecording ? 'bg-red-500/20 border-red-500/40 text-red-400 hover:bg-red-500/30' : sttModelMissing ? 'btn-secondary opacity-60' : 'btn-secondary'}"
+			title={sttModelMissing ? 'STT model not installed — go to Settings to download' : 'Record audio for transcription'}
+		>
+			{#if isRecording}
+				<Square size={16} />
+				<span>Stop</span>
+			{:else if sttModelMissing}
+				<AlertTriangle size={16} class="text-amber-400" />
+				<span>Dictate</span>
+			{/if}
+		</button>
+
 		<!-- Upload Button -->
 		<button
 			onclick={() => fileInput?.click()}
 			disabled={isBusy}
 			class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
 		>
-			{#if isUploading}
+			{#if isUploading || isTranscribing}
 				<Loader2 size={16} class="animate-spin" />
-				<span>Uploading...</span>
+				<span>{isTranscribing ? 'Transcribing...' : 'Uploading...'}</span>
 			{:else}
 				<Upload size={16} />
-				<span>Upload Document</span>
+				<span>Upload</span>
 			{/if}
 		</button>
 
 		<input
 			bind:this={fileInput}
 			type="file"
-			accept=".pdf,.docx,.txt,.md"
+			accept=".pdf,.docx,.txt,.md,.mp3,.aac,.ogg,.wav,.webm,.m4a"
 			onchange={handleFileUpload}
 			class="hidden"
 		/>
@@ -214,7 +558,7 @@
 			{/if}
 
 			<!-- Speed selector (tap-based, not a slider — prevents accidental drag changes on mobile) -->
-			<div class="relative" style="touch-action: manipulation">
+			<div class="relative" style="touch-action: manipulation" data-speed-picker>
 				<button
 					onclick={() => showSpeedPicker = !showSpeedPicker}
 					disabled={isBusy}
@@ -255,9 +599,48 @@
 				<span>Generate</span>
 			{/if}
 		</button>
+
+		<!-- Export Button -->
+		<div class="relative" data-export-picker>
+			<button
+				onclick={() => showExportPicker = !showExportPicker}
+				disabled={!text.trim() || isBusy}
+				class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
+			>
+				{#if isExporting}
+					<Loader2 size={16} class="animate-spin" />
+					<span>Exporting...</span>
+				{:else}
+					<Download size={16} />
+					<span>Export</span>
+				{/if}
+			</button>
+			{#if showExportPicker}
+				<div class="absolute bottom-full mb-1 right-0 bg-slate-800 border border-white/10 rounded-lg shadow-xl py-1 min-w-[120px] z-50">
+					<button
+						onclick={() => handleExport('pdf')}
+						class="w-full px-3 py-2.5 text-left text-xs transition-colors text-slate-300 hover:bg-white/5"
+					>
+						PDF
+					</button>
+					<button
+						onclick={() => handleExport('md')}
+						class="w-full px-3 py-2.5 text-left text-xs transition-colors text-slate-300 hover:bg-white/5"
+					>
+						Markdown
+					</button>
+					<button
+						onclick={() => handleExport('txt')}
+						class="w-full px-3 py-2.5 text-left text-xs transition-colors text-slate-300 hover:bg-white/5"
+					>
+						Plain Text
+					</button>
+				</div>
+			{/if}
+		</div>
 	</div>
 
 	<p class="text-[10px] text-slate-600 px-1">
-		{isAndroid ? 'Supports PDF, DOCX, TXT, and Markdown files.' : 'Supports PDF, DOCX, TXT, and Markdown files up to 100MB. Press Ctrl+Enter to generate.'}
+		{isAndroid ? 'Dictate or upload documents (PDF, DOCX, TXT, MD) and audio files (MP3, AAC, WAV).' : 'Upload documents or audio files for transcription. Press Ctrl+Enter to generate.'}
 	</p>
 </div>

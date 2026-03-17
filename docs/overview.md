@@ -23,7 +23,7 @@ Users who want private, local text-to-speech and speech-to-text with zero cloud 
 
 ## Spec Reference
 
-The original v3.0 expansion specification is at `docs/EXPANSION-PLAN-OPEN-MOBILE-VOICE.md`. Arnold's feature docs are derived from it combined with existing architecture docs. When in doubt, the spec is authoritative for v3.0 features.
+The original v3.0 expansion specification is at `docs/_reference/EXPANSION-PLAN-OPEN-MOBILE-VOICE.md`. Arnold's feature docs are derived from it combined with existing architecture docs. When in doubt, the spec is authoritative for v3.0 features.
 
 ## Current Status
 

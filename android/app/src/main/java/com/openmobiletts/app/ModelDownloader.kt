@@ -22,53 +22,119 @@ class ModelDownloader {
 
     companion object {
         private const val TAG = "ModelDownloader"
-        private const val MODEL_NAME = "kokoro-multi-lang-v1_0"
-        private const val MODEL_URL =
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$MODEL_NAME.tar.bz2"
+
+        // TTS model
+        private const val TTS_MODEL_NAME = "kokoro-multi-lang-v1_0"
+        private const val TTS_MODEL_URL =
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$TTS_MODEL_NAME.tar.bz2"
+
+        // STT model (Moonshine v2 Base / "Medium" — default)
+        // Note: sherpa-onnx uses "base" for the larger model, "tiny" for the smaller
+        private const val STT_MODEL_NAME = "sherpa-onnx-moonshine-base-en-int8"
+        private const val STT_MODEL_URL =
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$STT_MODEL_NAME.tar.bz2"
+
+        // Legacy alias
+        @Suppress("unused")
+        private const val MODEL_NAME = TTS_MODEL_NAME
     }
 
+    // ── TTS Model ──────────────────────────────────────────
+
     /**
-     * Check if the model is already downloaded.
+     * Check if the TTS model is already downloaded.
      */
-    fun isModelDownloaded(destDir: File): Boolean {
-        val modelDir = File(destDir, MODEL_NAME)
+    fun isTtsModelDownloaded(destDir: File): Boolean {
+        val modelDir = File(destDir, TTS_MODEL_NAME)
         return File(modelDir, "model.onnx").exists()
     }
 
-    /**
-     * Get the model directory path.
-     */
-    fun getModelDir(destDir: File): String {
-        return File(destDir, MODEL_NAME).absolutePath
-    }
+    /** Legacy alias for [isTtsModelDownloaded]. */
+    fun isModelDownloaded(destDir: File): Boolean = isTtsModelDownloaded(destDir)
 
     /**
-     * Download and extract the model.
+     * Get the TTS model directory path.
+     */
+    fun getTtsModelDir(destDir: File): String {
+        return File(destDir, TTS_MODEL_NAME).absolutePath
+    }
+
+    /** Legacy alias for [getTtsModelDir]. */
+    fun getModelDir(destDir: File): String = getTtsModelDir(destDir)
+
+    /**
+     * Download and extract the TTS model.
      * [onProgress] is called with (bytesDownloaded, totalBytes) — totalBytes may be -1 if unknown.
      */
+    suspend fun downloadTtsModel(
+        destDir: File,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ) = downloadArchive(destDir, TTS_MODEL_NAME, TTS_MODEL_URL, "model.onnx", onProgress)
+
+    /** Legacy alias for [downloadTtsModel]. */
     suspend fun download(
         destDir: File,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ) = downloadTtsModel(destDir, onProgress)
+
+    // ── STT Model ──────────────────────────────────────────
+
+    /**
+     * Check if the STT model (Moonshine v2) is already downloaded.
+     */
+    fun isSttModelDownloaded(destDir: File): Boolean {
+        val modelDir = File(destDir, STT_MODEL_NAME)
+        // Moonshine v2 uses preprocess.onnx as marker
+        return File(modelDir, "preprocess.onnx").exists()
+    }
+
+    /**
+     * Get the STT model directory path.
+     */
+    fun getSttModelDir(destDir: File): String {
+        return File(destDir, STT_MODEL_NAME).absolutePath
+    }
+
+    /**
+     * Download and extract the STT model (Moonshine v2 Medium).
+     */
+    suspend fun downloadSttModel(
+        destDir: File,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ) = downloadArchive(destDir, STT_MODEL_NAME, STT_MODEL_URL, "preprocess.onnx", onProgress)
+
+    // ── Shared Download Logic ──────────────────────────────
+
+    /**
+     * Download and extract a tar.bz2 model archive.
+     * [markerFile] is checked to determine if already downloaded.
+     */
+    private suspend fun downloadArchive(
+        destDir: File,
+        modelName: String,
+        modelUrl: String,
+        markerFile: String,
+        onProgress: (Long, Long) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        val modelDir = File(destDir, MODEL_NAME)
-        if (File(modelDir, "model.onnx").exists()) {
+        val modelDir = File(destDir, modelName)
+        if (File(modelDir, markerFile).exists()) {
             Log.i(TAG, "Model already exists at: $modelDir")
             return@withContext
         }
 
-        Log.i(TAG, "Downloading model from: $MODEL_URL")
-        val tempFile = File(destDir, "$MODEL_NAME.tar.bz2")
+        Log.i(TAG, "Downloading model from: $modelUrl")
+        val tempFile = File(destDir, "$modelName.tar.bz2")
 
         val openedConnections = mutableListOf<HttpURLConnection>()
         try {
             // Download — follow redirects manually to handle GitHub CDN
-            val url = URL(MODEL_URL)
+            val url = URL(modelUrl)
             var conn = url.openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = true
             conn.connect()
             openedConnections.add(conn)
             var redirectCount = 0
-            while (conn.responseCode in 301..302 && redirectCount < 5) {
+            while (conn.responseCode in 301..308 && redirectCount < 5) {
                 val newUrl = conn.getHeaderField("Location")
                 conn = URL(newUrl).openConnection() as HttpURLConnection
                 conn.instanceFollowRedirects = true
@@ -123,7 +189,7 @@ class ModelDownloader {
                 }
             }
 
-            Log.i(TAG, "Model extracted to: $modelDir")
+            Log.i(TAG, "Model extracted to: ${File(destDir, modelName)}")
         } finally {
             openedConnections.forEach { it.disconnect() }
             tempFile.delete()

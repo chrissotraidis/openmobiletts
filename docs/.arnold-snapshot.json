@@ -1,0 +1,160 @@
+{
+  "checked_at": "2026-03-16",
+  "commit": "b7aa0482ea6829a80cb768bb0a423534547fc28a",
+  "version": "0.2.0",
+  "values": {
+    "tts.token-limit": {
+      "doc_value": "510 tokens hard limit",
+      "code_value": "510 (Kokoro model constraint)",
+      "doc_file": "docs/tts/tts-overview.md",
+      "code_file": "server/src/text_preprocessor.py",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.chunk-size": {
+      "doc_value": "175-250 tokens per chunk",
+      "code_value": "MAX_CHUNK_TOKENS=250, target 175-250",
+      "doc_file": "docs/tts/tts-overview.md",
+      "code_file": "server/src/text_preprocessor.py",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "stt.sample-rate": {
+      "doc_value": "16kHz",
+      "code_value": "SAMPLE_RATE=16000 (both platforms)",
+      "doc_file": "docs/stt/stt-overview.md",
+      "code_file": "android/app/.../SttManager.kt:26, server/src/stt_engine.py:30",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "stt.model-name": {
+      "doc_value": "Moonshine v2 Medium",
+      "code_value": "sherpa-onnx-moonshine-base-en-int8",
+      "doc_file": "docs/stt/stt-overview.md",
+      "code_file": "android/app/.../ModelDownloader.kt:32, server/src/stt_engine.py:30",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "user-stated"
+    },
+    "stt.default-android": {
+      "doc_value": "Medium is default on Android",
+      "code_value": "STT_MODEL_NAME=sherpa-onnx-moonshine-base-en-int8",
+      "doc_file": "docs/stt/stt-overview.md",
+      "code_file": "android/app/.../ModelDownloader.kt:32",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "user-stated"
+    },
+    "stt.feature-status": {
+      "doc_value": "🔵 Not Started",
+      "code_value": "Backend implemented (SttManager, OfflineRecognizer, endpoints)",
+      "doc_file": "docs/status.md",
+      "code_file": "android/app/.../SttManager.kt",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "document-export.feature-status": {
+      "doc_value": "🔵 Not Started",
+      "code_value": "Backend + API implemented (ExportManager, endpoints, UI picker)",
+      "doc_file": "docs/status.md",
+      "code_file": "android/app/.../ExportManager.kt",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "audio-import.feature-status": {
+      "doc_value": "🔵 Not Started",
+      "code_value": "AudioDecoder + upload routing implemented",
+      "doc_file": "docs/status.md",
+      "code_file": "android/app/.../AudioDecoder.kt",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "project-storage.feature-status": {
+      "doc_value": "🔵 Not Started",
+      "code_value": "CRUD + cleanup + export implemented on both platforms",
+      "doc_file": "docs/status.md",
+      "code_file": "android/app/.../ProjectStorage.kt, server/src/project_storage.py",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "unified-input.feature-status": {
+      "doc_value": "🔵 Not Started",
+      "code_value": "Mic button, export picker, audio routing in TextInput.svelte",
+      "doc_file": "docs/status.md",
+      "code_file": "client/src/lib/components/TextInput.svelte",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "stt.model-manager-naming": {
+      "doc_value": "ModelDownloader.kt (extended in-place)",
+      "code_value": "ModelDownloader.kt extended in-place (no separate ModelManager.kt)",
+      "doc_file": "docs/stt/stt-overview.md, docs/android-app/android-app-overview.md",
+      "code_file": "android/app/.../ModelDownloader.kt",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "document-export.pdf-android": {
+      "doc_value": "android.graphics.pdf.PdfDocument",
+      "code_value": "PdfDocument API used in ExportManager.kt",
+      "doc_file": "docs/document-export/document-export-overview.md",
+      "code_file": "android/app/.../ExportManager.kt",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "decided"
+    },
+    "document-export.pdf-desktop": {
+      "doc_value": "ReportLab Python library",
+      "code_value": "ReportLab used in export_manager.py",
+      "doc_file": "docs/document-export/document-export-overview.md",
+      "code_file": "server/src/export_manager.py",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "android-app.record-audio-permission": {
+      "doc_value": "RECORD_AUDIO in AndroidManifest.xml",
+      "code_value": "RECORD_AUDIO declared",
+      "doc_file": "docs/stt/dictation-flow.md",
+      "code_file": "android/app/src/main/AndroidManifest.xml",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "android-app.health-version": {
+      "doc_value": "v3.0.0",
+      "code_value": "3.0.0",
+      "doc_file": "docs/status.md",
+      "code_file": "android/app/.../TtsHttpServer.kt:95, server/src/main.py:538",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "project-storage.desktop-dir": {
+      "doc_value": "~/.openmobilevoice/projects/",
+      "code_value": "Path.home() / '.openmobilevoice' / 'projects'",
+      "doc_file": "docs/project-storage/project-storage-overview.md",
+      "code_file": "server/src/project_storage.py:21",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "audio-import.target-sample-rate": {
+      "doc_value": "16kHz mono",
+      "code_value": "TARGET_SAMPLE_RATE=16000",
+      "doc_file": "docs/audio-import/audio-import-overview.md",
+      "code_file": "android/app/.../AudioDecoder.kt:19",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    }
+  }
+}

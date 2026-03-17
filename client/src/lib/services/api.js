@@ -108,3 +108,57 @@ export async function healthCheck() {
 	if (!res.ok) throw new Error('Server unhealthy');
 	return res.json();
 }
+
+/**
+ * Transcribe audio to text via Moonshine STT.
+ * @param {Blob} audioBlob - Audio data (WAV format preferred)
+ * @returns {Promise<{text: string, duration_ms: number, model: string}>}
+ */
+export async function transcribeAudio(audioBlob) {
+	const formData = new FormData();
+	formData.append('audio', audioBlob, 'recording.wav');
+
+	const res = await fetch(apiUrl('/api/stt/transcribe'), {
+		method: 'POST',
+		body: formData,
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Transcription failed');
+	}
+
+	return res.json();
+}
+
+/**
+ * Get available STT models and their status.
+ * @returns {Promise<{models: Array<{name: string, size_mb: number, downloaded: boolean, active: boolean}>}>}
+ */
+export async function fetchSttModels() {
+	const res = await fetch(apiUrl('/api/stt/models'));
+	if (!res.ok) throw new Error('Failed to fetch STT models');
+	return res.json();
+}
+
+/**
+ * Export text as a document file (PDF, MD, or TXT).
+ * @param {string} text - The text content to export
+ * @param {string} title - Document title
+ * @param {'pdf'|'md'|'txt'} format - Export format
+ * @returns {Promise<Blob>} The exported file as a Blob
+ */
+export async function exportDocument(text, title, format) {
+	const res = await fetch(apiUrl(`/api/export/${format}`), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ text, title }),
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Export failed');
+	}
+
+	return res.blob();
+}

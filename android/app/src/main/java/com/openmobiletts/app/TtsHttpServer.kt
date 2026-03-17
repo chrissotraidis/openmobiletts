@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 class TtsHttpServer(
     private val context: Context,
     private val ttsManager: TtsManager,
+    private val sttManager: SttManager? = null,
     port: Int = PORT,
 ) : NanoHTTPD("127.0.0.1", port) {
 
@@ -58,6 +59,19 @@ class TtsHttpServer(
                 uri.startsWith("/api/tts/jobs/") -> handleJobRequest(session, uri)
                 uri.startsWith("/api/logs") -> handleLogs()
                 uri == "/api/documents/upload" && method == Method.POST -> handleDocumentUpload(session)
+                uri == "/api/stt/transcribe" && method == Method.POST -> handleSttTranscribe(session)
+                uri == "/api/stt/models" -> handleSttModels()
+                uri == "/api/stt/models/download" && method == Method.POST -> handleSttModelDownload()
+                uri == "/api/export/pdf" && method == Method.POST -> handleExport(session, "pdf")
+                uri == "/api/export/md" && method == Method.POST -> handleExport(session, "md")
+                uri == "/api/export/txt" && method == Method.POST -> handleExport(session, "txt")
+                uri == "/api/projects" && method == Method.GET -> handleProjectList()
+                uri == "/api/projects" && method == Method.POST -> handleProjectCreate(session)
+                uri == "/api/projects/export" -> handleProjectExportAll()
+                uri == "/api/projects/cleanup" && method == Method.POST -> handleProjectCleanup(session)
+                uri.matches(Regex("/api/projects/[^/]+")) && method == Method.GET -> handleProjectGet(uri)
+                uri.matches(Regex("/api/projects/[^/]+")) && method == Method.PUT -> handleProjectUpdate(session, uri)
+                uri.matches(Regex("/api/projects/[^/]+")) && method == Method.DELETE -> handleProjectDelete(uri)
                 else -> serveStaticAsset(uri)
             }
         } catch (e: Exception) {
@@ -79,7 +93,7 @@ class TtsHttpServer(
     private fun handleHealth(): Response {
         return newFixedLengthResponse(
             Response.Status.OK, MIME_JSON,
-            """{"status":"healthy","version":"2.0.0","engine":"sherpa-onnx"}"""
+            """{"status":"healthy","version":"3.0.0","engine":"sherpa-onnx"}"""
         )
     }
 
@@ -153,6 +167,399 @@ class TtsHttpServer(
             )
         }
     }
+
+    // ---------- STT endpoints ----------
+
+    /**
+     * Transcribe uploaded audio to text via Moonshine v2.
+     * Accepts audio as multipart file upload (WAV/PCM).
+     * Returns JSON with transcribed text.
+     */
+    private fun handleSttTranscribe(session: IHTTPSession): Response {
+        val mgr = sttManager
+            ?: return newFixedLengthResponse(
+                Response.Status.SERVICE_UNAVAILABLE, MIME_JSON,
+                """{"detail":"STT not available"}"""
+            )
+
+        // Lazy-init STT engine on first transcription request (mirrors TTS pattern)
+        try {
+            if (!mgr.isInitialized) {
+                val modelDir = ModelDownloader().getSttModelDir(context.filesDir)
+                AppLog.i(TAG, "Initializing STT engine from: $modelDir")
+
+                val preprocessFile = File("$modelDir/preprocess.onnx")
+                if (!preprocessFile.exists()) {
+                    return newFixedLengthResponse(
+                        Response.Status.INTERNAL_ERROR, MIME_JSON,
+                        """{"detail":"STT model not found. Download it first."}"""
+                    )
+                }
+
+                runBlocking { mgr.init(modelDir) }
+                AppLog.i(TAG, "STT engine initialized successfully")
+            }
+        } catch (e: Exception) {
+            AppLog.e(TAG, "STT engine initialization failed", e)
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"STT initialization failed: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+
+        try {
+            val files = HashMap<String, String>()
+            session.parseBody(files)
+
+            // Accept audio via multipart "audio" field or raw body
+            val tmpFilePath = files["audio"] ?: files["file"]
+                ?: return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_JSON,
+                    """{"detail":"No audio data uploaded. Send as multipart field 'audio'."}"""
+                )
+
+            val tmpFile = java.io.File(tmpFilePath)
+            val originalFilename = session.parms["audio"] ?: session.parms["file"] ?: "audio.wav"
+
+            // Decode audio to 16kHz mono PCM float samples via native AudioDecoder
+            // Handles all formats: wav, mp3, aac, ogg, webm, m4a
+            val samples = try {
+                AudioDecoder.decode(tmpFile)
+            } catch (e: Exception) {
+                AppLog.e(TAG, "AudioDecoder failed for $originalFilename", e)
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_JSON,
+                    """{"detail":"Could not decode audio file: ${e.message?.replace("\"", "\\\"")}"}"""
+                )
+            }
+
+            if (samples.isEmpty()) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_JSON,
+                    """{"detail":"Audio data is empty or could not be decoded"}"""
+                )
+            }
+
+            val durationMs = (samples.size.toLong() * 1000) / SttManager.SAMPLE_RATE
+
+            AppLog.i(TAG, "STT transcribe: ${samples.size} samples (${durationMs}ms audio)")
+
+            val text = runBlocking { mgr.transcribe(samples) }
+
+            val response = JSONObject().apply {
+                put("text", text)
+                put("duration_ms", durationMs)
+                put("model", "moonshine-v2-medium")
+            }
+
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+        } catch (e: Exception) {
+            AppLog.e(TAG, "STT transcription failed", e)
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"Transcription failed: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+    }
+
+    /**
+     * List available STT models and their download status.
+     */
+    private fun handleSttModels(): Response {
+        val downloader = ModelDownloader()
+        val destDir = context.filesDir
+
+        val models = JSONArray().apply {
+            put(JSONObject().apply {
+                put("name", "moonshine-v2-medium")
+                put("size_mb", 250)
+                put("downloaded", downloader.isSttModelDownloaded(destDir))
+                put("active", sttManager?.isInitialized == true)
+            })
+        }
+
+        val response = JSONObject().apply {
+            put("models", models)
+        }
+
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+    }
+
+    /**
+     * Download the STT model in the background.
+     * Returns immediately with status — download continues asynchronously.
+     */
+    private fun handleSttModelDownload(): Response {
+        val downloader = ModelDownloader()
+        val destDir = context.filesDir
+
+        if (downloader.isSttModelDownloaded(destDir)) {
+            return newFixedLengthResponse(
+                Response.Status.OK, MIME_JSON,
+                """{"status":"already_downloaded"}"""
+            )
+        }
+
+        // Start download in background thread
+        Thread {
+            try {
+                AppLog.i(TAG, "Starting STT model download from Settings...")
+                kotlinx.coroutines.runBlocking {
+                    downloader.downloadSttModel(destDir) { bytesRead, totalBytes ->
+                        val mb = bytesRead / 1024 / 1024
+                        AppLog.d(TAG, "STT download progress: ${mb}MB / ${totalBytes / 1024 / 1024}MB")
+                    }
+                }
+                AppLog.i(TAG, "STT model download complete")
+
+                // Initialize STT engine after download
+                if (sttManager != null && !sttManager!!.isInitialized) {
+                    val modelDir = downloader.getSttModelDir(destDir)
+                    kotlinx.coroutines.runBlocking {
+                        sttManager!!.init(modelDir)
+                    }
+                    AppLog.i(TAG, "STT engine initialized after download")
+                }
+            } catch (e: Exception) {
+                AppLog.e(TAG, "STT model download failed", e)
+            }
+        }.start()
+
+        return newFixedLengthResponse(
+            Response.Status.OK, MIME_JSON,
+            """{"status":"downloading","message":"Download started in background. Check /api/stt/models for status."}"""
+        )
+    }
+
+    /**
+     * Convert raw 16-bit PCM bytes to FloatArray normalized to [-1, 1].
+     * Handles both raw PCM and WAV files (skips WAV header if present).
+     */
+    private fun pcmBytesToFloatArray(bytes: ByteArray): FloatArray {
+        var offset = 0
+
+        // Check for WAV header (RIFF....WAVE)
+        if (bytes.size > 44 &&
+            bytes[0] == 'R'.code.toByte() &&
+            bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() &&
+            bytes[3] == 'F'.code.toByte()
+        ) {
+            // Skip to data chunk — find "data" subchunk
+            var i = 12
+            while (i < bytes.size - 8) {
+                if (bytes[i] == 'd'.code.toByte() &&
+                    bytes[i + 1] == 'a'.code.toByte() &&
+                    bytes[i + 2] == 't'.code.toByte() &&
+                    bytes[i + 3] == 'a'.code.toByte()
+                ) {
+                    offset = i + 8 // skip "data" + 4-byte size
+                    break
+                }
+                i++
+            }
+            if (offset == 0) return FloatArray(0) // data chunk not found — cannot decode
+        }
+
+        val pcmBytes = bytes.size - offset
+        val numSamples = pcmBytes / 2 // 16-bit = 2 bytes per sample
+
+        if (numSamples <= 0) return FloatArray(0)
+
+        val samples = FloatArray(numSamples)
+        for (j in 0 until numSamples) {
+            val byteIndex = offset + j * 2
+            if (byteIndex + 1 >= bytes.size) break
+            // Little-endian 16-bit signed
+            val sample = (bytes[byteIndex].toInt() and 0xFF) or
+                    (bytes[byteIndex + 1].toInt() shl 8)
+            samples[j] = sample.toShort().toFloat() / 32768.0f
+        }
+
+        return samples
+    }
+
+    // ---------- Export endpoints ----------
+
+    private fun handleExport(session: IHTTPSession, format: String): Response {
+        try {
+            val maxBody = 1 * 1024 * 1024
+            val contentLength = (session.headers["content-length"]?.toIntOrNull() ?: 0).coerceAtMost(maxBody)
+            val bodyBytes = ByteArray(contentLength)
+            DataInputStream(session.inputStream).readFully(bodyBytes)
+            val body = JSONObject(String(bodyBytes))
+
+            val text = body.optString("text", "")
+            val title = body.optString("title", "Export")
+
+            if (text.isBlank()) {
+                return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_JSON,
+                    """{"detail":"No text to export"}"""
+                )
+            }
+
+            val (bytes, mimeType, extension) = when (format) {
+                "pdf" -> Triple(
+                    ExportManager.exportPdf(text, title),
+                    "application/pdf",
+                    "pdf"
+                )
+                "md" -> Triple(
+                    ExportManager.exportMarkdown(text, title),
+                    "text/markdown",
+                    "md"
+                )
+                "txt" -> Triple(
+                    ExportManager.exportPlainText(text, title),
+                    "text/plain",
+                    "txt"
+                )
+                else -> return newFixedLengthResponse(
+                    Response.Status.BAD_REQUEST, MIME_JSON,
+                    """{"detail":"Unsupported format: $format"}"""
+                )
+            }
+
+            val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(50)
+            val filename = "$sanitizedTitle.$extension"
+
+            AppLog.i(TAG, "Export: $format, ${bytes.size} bytes, filename=$filename")
+
+            val response = newFixedLengthResponse(
+                Response.Status.OK,
+                mimeType,
+                java.io.ByteArrayInputStream(bytes),
+                bytes.size.toLong()
+            )
+            response.addHeader("Content-Disposition", "attachment; filename=\"$filename\"")
+            return response
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Export failed", e)
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"Export failed: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+    }
+
+    // ---------- Project endpoints ----------
+
+    private val projectStorage by lazy { ProjectStorage(context.filesDir) }
+
+    private fun handleProjectList(): Response {
+        val projects = projectStorage.list()
+        val response = JSONObject().put("projects", projects)
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+    }
+
+    private fun handleProjectCreate(session: IHTTPSession): Response {
+        try {
+            val maxBody = 1 * 1024 * 1024
+            val contentLength = (session.headers["content-length"]?.toIntOrNull() ?: 0).coerceAtMost(maxBody)
+            val bodyBytes = ByteArray(contentLength)
+            DataInputStream(session.inputStream).readFully(bodyBytes)
+            val body = JSONObject(String(bodyBytes))
+
+            val title = body.optString("title", "Untitled")
+            val type = body.optString("type", "tts")
+            val content = body.optString("content", "")
+
+            val id = projectStorage.create(title, type, content)
+
+            val response = JSONObject().apply {
+                put("id", id)
+                put("created", System.currentTimeMillis())
+            }
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Project create failed", e)
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"Failed to create project: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+    }
+
+    private fun handleProjectGet(uri: String): Response {
+        val id = uri.substringAfterLast("/")
+        val project = projectStorage.get(id)
+            ?: return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"detail":"Project not found"}"""
+            )
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, project.toString())
+    }
+
+    private fun handleProjectUpdate(session: IHTTPSession, uri: String): Response {
+        try {
+            val id = uri.substringAfterLast("/")
+            val maxBody = 1 * 1024 * 1024
+            val contentLength = (session.headers["content-length"]?.toIntOrNull() ?: 0).coerceAtMost(maxBody)
+            val bodyBytes = ByteArray(contentLength)
+            DataInputStream(session.inputStream).readFully(bodyBytes)
+            val body = JSONObject(String(bodyBytes))
+
+            val content = if (body.has("content")) body.getString("content") else null
+            val title = if (body.has("title")) body.getString("title") else null
+
+            val updated = projectStorage.update(id, content, title)
+            if (!updated) {
+                return newFixedLengthResponse(
+                    Response.Status.NOT_FOUND, MIME_JSON,
+                    """{"detail":"Project not found"}"""
+                )
+            }
+
+            val response = JSONObject().put("modified", System.currentTimeMillis())
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+        } catch (e: Exception) {
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"Update failed: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+    }
+
+    private fun handleProjectDelete(uri: String): Response {
+        val id = uri.substringAfterLast("/")
+        val deleted = projectStorage.delete(id)
+        if (!deleted) {
+            return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_JSON,
+                """{"detail":"Project not found"}"""
+            )
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, """{"deleted":true}""")
+    }
+
+    private fun handleProjectExportAll(): Response {
+        val export = projectStorage.exportAll()
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, export.toString(2))
+    }
+
+    private fun handleProjectCleanup(session: IHTTPSession): Response {
+        try {
+            val maxBody = 1024
+            val contentLength = (session.headers["content-length"]?.toIntOrNull() ?: 0).coerceAtMost(maxBody)
+            val bodyBytes = ByteArray(contentLength)
+            DataInputStream(session.inputStream).readFully(bodyBytes)
+            val body = JSONObject(String(bodyBytes))
+
+            val olderThanDays = body.optInt("older_than_days", 30)
+            val deleted = projectStorage.cleanup(olderThanDays)
+
+            val response = JSONObject().put("deleted_count", deleted)
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+        } catch (e: Exception) {
+            return newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, MIME_JSON,
+                """{"detail":"Cleanup failed: ${e.message?.replace("\"", "\\\"")}"}"""
+            )
+        }
+    }
+
+    // ---------- TTS streaming ----------
 
     /**
      * Core TTS streaming endpoint.
