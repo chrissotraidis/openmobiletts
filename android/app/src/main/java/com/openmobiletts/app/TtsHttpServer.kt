@@ -35,6 +35,11 @@ class TtsHttpServer(
     /** Active and recently completed generation jobs. */
     private val jobs = ConcurrentHashMap<String, TtsJob>()
 
+    /** Tracks whether an STT model download is in progress. */
+    @Volatile
+    var sttDownloadInProgress = false
+        private set
+
     init {
         // Clean up leftover job files from previous sessions
         val jobsDir = File(context.filesDir, "tts_jobs")
@@ -275,6 +280,7 @@ class TtsHttpServer(
                 put("size_mb", 250)
                 put("downloaded", downloader.isSttModelDownloaded(destDir))
                 put("active", sttManager?.isInitialized == true)
+                put("downloading", sttDownloadInProgress)
             })
         }
 
@@ -301,6 +307,7 @@ class TtsHttpServer(
         }
 
         // Start download in background thread
+        sttDownloadInProgress = true
         Thread {
             try {
                 AppLog.i(TAG, "Starting STT model download from Settings...")
@@ -322,6 +329,8 @@ class TtsHttpServer(
                 }
             } catch (e: Exception) {
                 AppLog.e(TAG, "STT model download failed", e)
+            } finally {
+                sttDownloadInProgress = false
             }
         }.start()
 
@@ -329,54 +338,6 @@ class TtsHttpServer(
             Response.Status.OK, MIME_JSON,
             """{"status":"downloading","message":"Download started in background. Check /api/stt/models for status."}"""
         )
-    }
-
-    /**
-     * Convert raw 16-bit PCM bytes to FloatArray normalized to [-1, 1].
-     * Handles both raw PCM and WAV files (skips WAV header if present).
-     */
-    private fun pcmBytesToFloatArray(bytes: ByteArray): FloatArray {
-        var offset = 0
-
-        // Check for WAV header (RIFF....WAVE)
-        if (bytes.size > 44 &&
-            bytes[0] == 'R'.code.toByte() &&
-            bytes[1] == 'I'.code.toByte() &&
-            bytes[2] == 'F'.code.toByte() &&
-            bytes[3] == 'F'.code.toByte()
-        ) {
-            // Skip to data chunk — find "data" subchunk
-            var i = 12
-            while (i < bytes.size - 8) {
-                if (bytes[i] == 'd'.code.toByte() &&
-                    bytes[i + 1] == 'a'.code.toByte() &&
-                    bytes[i + 2] == 't'.code.toByte() &&
-                    bytes[i + 3] == 'a'.code.toByte()
-                ) {
-                    offset = i + 8 // skip "data" + 4-byte size
-                    break
-                }
-                i++
-            }
-            if (offset == 0) return FloatArray(0) // data chunk not found — cannot decode
-        }
-
-        val pcmBytes = bytes.size - offset
-        val numSamples = pcmBytes / 2 // 16-bit = 2 bytes per sample
-
-        if (numSamples <= 0) return FloatArray(0)
-
-        val samples = FloatArray(numSamples)
-        for (j in 0 until numSamples) {
-            val byteIndex = offset + j * 2
-            if (byteIndex + 1 >= bytes.size) break
-            // Little-endian 16-bit signed
-            val sample = (bytes[byteIndex].toInt() and 0xFF) or
-                    (bytes[byteIndex + 1].toInt() shl 8)
-            samples[j] = sample.toShort().toFloat() / 32768.0f
-        }
-
-        return samples
     }
 
     // ---------- Export endpoints ----------

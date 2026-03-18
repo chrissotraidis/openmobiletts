@@ -109,10 +109,21 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "STT model missing — downloading in background")
                 scope.launch {
                     try {
+                        val downloader = ModelDownloader()
                         withContext(Dispatchers.IO) {
-                            ModelDownloader().downloadSttModel(filesDir)
+                            downloader.downloadSttModel(filesDir)
                         }
                         Log.i(TAG, "STT model downloaded in background")
+
+                        // Initialize STT engine after download
+                        val sttApp = application as OpenMobileTtsApp
+                        if (!sttApp.sttManager.isInitialized) {
+                            val sttModelDir = downloader.getSttModelDir(filesDir)
+                            withContext(Dispatchers.IO) {
+                                sttApp.sttManager.init(sttModelDir)
+                            }
+                            Log.i(TAG, "STT engine initialized after background download")
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Background STT model download failed: ${e.message}")
                     }

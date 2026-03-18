@@ -120,14 +120,29 @@
 	}
 
 	function handlePopState(e) {
-		// If expanded view is open and we navigated back, close it
+		// If expanded player is open, close it first
 		if (playerExpanded && !e.state?.expanded) {
 			playerExpanded = false;
 			return;
 		}
+
+		// If we're in a reader/detail view (history pushes view:'reader' state),
+		// let AudioHistory's own popstate handler close the reader — don't switch tabs
+		if (e.state?.view === 'reader' || (!e.state?.view && activeTab === 'history')) {
+			// Let AudioHistory handle it — it has its own popstate listener
+			return;
+		}
+
 		const tab = e.state?.tab;
 		if (tab && tab !== activeTab) {
 			activeTab = tab;
+		} else if (activeTab !== 'generate') {
+			// Back from settings returns to Generate
+			activeTab = 'generate';
+			history.replaceState({ tab: 'generate' }, '');
+		} else {
+			// Already on Generate — push state to prevent app exit
+			history.pushState({ tab: 'generate' }, '');
 		}
 	}
 
@@ -275,12 +290,21 @@
 					{/if}
 				</h2>
 			</div>
+			{#if activeTab === 'generate'}
+				<button
+					onclick={() => { playerStore.stop(); }}
+					class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 px-3 py-1.5 rounded-lg transition-colors hover:bg-white/5"
+				>
+					<Plus size={14} />
+					New
+				</button>
+			{/if}
 		</header>
 
 		<!-- SCROLLABLE VIEW -->
 		<div class="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 custom-scrollbar">
 			{#if activeTab === 'generate'}
-				<div class="max-w-4xl mx-auto space-y-6 md:space-y-8">
+				<div class="max-w-4xl mx-auto space-y-6 md:space-y-8 pb-32">
 					<TextInput />
 					<GenerationProgress />
 					<TextDisplay />
@@ -646,14 +670,24 @@
 										if (!res.ok) throw new Error('Export failed');
 										const data = await res.json();
 										const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-										const url = URL.createObjectURL(blob);
-										const a = document.createElement('a');
-										a.href = url;
-										a.download = `omv-backup-${new Date().toISOString().slice(0,10)}.json`;
-										document.body.appendChild(a);
-										a.click();
-										document.body.removeChild(a);
-										setTimeout(() => URL.revokeObjectURL(url), 1000);
+										const filename = `omv-backup-${new Date().toISOString().slice(0,10)}.json`;
+										if (typeof window !== 'undefined' && window.Android?.saveAudioFile) {
+											const reader = new FileReader();
+											reader.onload = () => {
+												const base64 = reader.result.split(',')[1];
+												window.Android.saveAudioFile(base64, filename, 'application/json');
+											};
+											reader.readAsDataURL(blob);
+										} else {
+											const url = URL.createObjectURL(blob);
+											const a = document.createElement('a');
+											a.href = url;
+											a.download = filename;
+											document.body.appendChild(a);
+											a.click();
+											document.body.removeChild(a);
+											setTimeout(() => URL.revokeObjectURL(url), 1000);
+										}
 									} catch (e) { /* silent */ }
 								}}
 								class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-white/10 rounded-xl text-sm transition-colors"
@@ -707,19 +741,33 @@
 						<p class="text-sm text-slate-400">
 							Download server logs for bug reports. Includes text processing details, errors, and timing information.
 						</p>
-						<button
-							onclick={exportLogs}
-							disabled={exportingLogs}
-							class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 rounded-xl text-sm font-medium transition-colors"
-						>
-							{#if exportingLogs}
-								<Loader2 size={16} class="animate-spin" />
-								Exporting...
-							{:else}
-								<FileDown size={16} />
-								Export Logs (JSON)
-							{/if}
-						</button>
+						<div class="flex gap-3">
+							<button
+								onclick={exportLogs}
+								disabled={exportingLogs}
+								class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 rounded-xl text-sm font-medium transition-colors"
+							>
+								{#if exportingLogs}
+									<Loader2 size={16} class="animate-spin" />
+									Exporting...
+								{:else}
+									<FileDown size={16} />
+									Export Logs
+								{/if}
+							</button>
+							<button
+								onclick={async () => {
+									try {
+										localStorage.removeItem('openmobiletts_logs');
+										await fetch(apiUrl('/api/logs/clear'), { method: 'POST' });
+									} catch { /* silent */ }
+								}}
+								class="flex items-center gap-2 px-4 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-xl text-sm font-medium transition-colors"
+							>
+								<Trash2 size={16} />
+								Clear Logs
+							</button>
+						</div>
 					</div>
 
 					{#if isIOS}

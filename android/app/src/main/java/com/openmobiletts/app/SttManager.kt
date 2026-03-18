@@ -47,26 +47,34 @@ class SttManager {
             withContext(Dispatchers.IO) {
                 AppLog.i(TAG, "Initializing Sherpa-ONNX STT (Moonshine) from: $modelDir")
 
-                // Moonshine v2 uses a merged decoder (2-file model)
-                // Check for merged decoder first, fall back to split decoder
-                val mergedDecoder = java.io.File("$modelDir/decoder.onnx")
-                val useMerged = mergedDecoder.exists()
+                // Discover actual model file names — INT8 models use ".int8.onnx" suffix
+                val dir = java.io.File(modelDir)
+                val files = dir.listFiles()?.map { it.name } ?: emptyList()
 
-                val moonshineConfig = if (useMerged) {
-                    // Moonshine v2 merged decoder format (2 files)
+                // Find encoder file (encode.onnx or encode.int8.onnx)
+                val encoderFile = files.firstOrNull { it.startsWith("encode") && it.endsWith(".onnx") }
+                    ?: throw IllegalStateException("No encoder file found in $modelDir")
+
+                // Find preprocessor file
+                val preprocessorFile = files.firstOrNull { it.startsWith("preprocess") && it.endsWith(".onnx") }
+                    ?: throw IllegalStateException("No preprocessor file found in $modelDir")
+
+                // Find split decoder files (this .so version only supports split decoder)
+                val uncachedDecoderFile = files.firstOrNull { it.startsWith("uncached_decode") && it.endsWith(".onnx") }
+                val cachedDecoderFile = files.firstOrNull { it.startsWith("cached_decode") && it.endsWith(".onnx") }
+
+                AppLog.i(TAG, "Model files: encoder=$encoderFile, preprocessor=$preprocessorFile, " +
+                    "uncached=${uncachedDecoderFile}, cached=${cachedDecoderFile}")
+
+                val moonshineConfig = if (uncachedDecoderFile != null && cachedDecoderFile != null) {
                     OfflineMoonshineModelConfig(
-                        preprocessor = "$modelDir/preprocess.onnx",
-                        encoder = "$modelDir/encode.onnx",
-                        mergedDecoder = "$modelDir/decoder.onnx",
+                        preprocessor = "$modelDir/$preprocessorFile",
+                        encoder = "$modelDir/$encoderFile",
+                        uncachedDecoder = "$modelDir/$uncachedDecoderFile",
+                        cachedDecoder = "$modelDir/$cachedDecoderFile",
                     )
                 } else {
-                    // Moonshine v2 split decoder format (4 files)
-                    OfflineMoonshineModelConfig(
-                        preprocessor = "$modelDir/preprocess.onnx",
-                        encoder = "$modelDir/encode.onnx",
-                        uncachedDecoder = "$modelDir/uncached_decode.onnx",
-                        cachedDecoder = "$modelDir/cached_decode.onnx",
-                    )
+                    throw IllegalStateException("No decoder files found in $modelDir. Files: $files")
                 }
 
                 val config = OfflineRecognizerConfig(
@@ -78,6 +86,7 @@ class SttManager {
                         moonshine = moonshineConfig,
                         numThreads = 4,
                         tokens = "$modelDir/tokens.txt",
+                        modelType = "moonshine",
                     ),
                     decodingMethod = "greedy_search",
                 )
