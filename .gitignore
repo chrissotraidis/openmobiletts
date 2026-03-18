@@ -64,6 +64,7 @@ out/
 .vscode/
 .idea/
 .obsidian/
+.claude/
 Untitled.canvas
 *.swp
 *.swo
