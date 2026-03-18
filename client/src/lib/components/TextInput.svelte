@@ -2,6 +2,7 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
+	import Waveform from '$lib/components/Waveform.svelte';
 	import { uploadDocument, fetchVoices, fetchEngines, transcribeAudio, exportDocument, fetchSttModels } from '$lib/services/api';
 	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu, X, Mic, Square, Download, AlertTriangle } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
@@ -21,7 +22,6 @@
 	let isExporting = $state(false);
 
 	// STT model availability
-	let sttReady = $state(false);
 	let sttModelMissing = $state(false);
 
 	// STT recording state
@@ -31,6 +31,7 @@
 	let mediaRecorder = null;
 	let audioChunks = [];
 	let recordingTimer = null;
+	let activeStream = $state(null);
 
 	const speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -65,16 +66,20 @@
 				// Fallback — keep empty, selects will be hidden
 			}
 
-			// Check STT model availability
-			try {
-				const result = await fetchSttModels();
-				const models = result.models || [];
-				const activeModel = models.find(m => m.active || m.downloaded);
-				sttReady = !!activeModel;
-				sttModelMissing = !activeModel;
-			} catch {
-				sttReady = false;
-				sttModelMissing = true;
+			// Check STT model availability (retry up to 3 times — server may still be starting)
+			for (let attempt = 0; attempt < 3; attempt++) {
+				try {
+					if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+					const result = await fetchSttModels();
+					const models = result.models || [];
+					const activeModel = models.find(m => m.active || m.downloaded);
+					sttModelMissing = !activeModel;
+					break;
+				} catch {
+					// Don't block dictate on network errors — let the server-side
+					// handle "model not found" when the user actually tries to record
+					sttModelMissing = false; // allow dictate attempt, server will error if truly missing
+				}
 			}
 		})();
 
@@ -173,18 +178,27 @@
 	// ── STT Recording ──────────────────────────────
 
 	async function startRecording() {
-		if (isRecording || isGenerating) return;
+		if (isRecording || isGenerating || isTranscribing) return;
 		uploadError = '';
 
-		// Check if STT model is available
-		if (sttModelMissing) {
-			uploadError = 'Speech-to-text model not installed. Go to Settings → Storage & Speech-to-Text to download it.';
-			return;
+		// Re-check STT model availability live (don't rely on stale onMount flag)
+		try {
+			const result = await fetchSttModels();
+			const models = result.models || [];
+			const activeModel = models.find(m => m.active || m.downloaded);
+			sttModelMissing = !activeModel;
+			if (!activeModel) {
+				uploadError = 'Speech-to-text model not installed. Go to Settings → Storage & Speech-to-Text to download it.';
+				return;
+			}
+		} catch {
+			// Server may not support STT models endpoint — proceed anyway
+			// The transcribe endpoint will return an error if the model is truly missing
 		}
 
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
+				audio: { channelCount: 1, echoCancellation: true }
 			});
 
 			audioChunks = [];
@@ -204,9 +218,10 @@
 			mediaRecorder.onstop = async () => {
 				// Stop all tracks to release mic
 				stream.getTracks().forEach(t => t.stop());
+				activeStream = null;
 				clearInterval(recordingTimer);
 
-				if (audioChunks.length === 0 || recordingDuration < 1) {
+				if (audioChunks.length === 0) {
 					uploadError = 'Recording too short. Try again.';
 					isRecording = false;
 					return;
@@ -235,7 +250,8 @@
 				}
 			};
 
-			mediaRecorder.start(250); // collect data every 250ms
+			activeStream = stream;  // set before isRecording so Waveform mounts with non-null stream
+			mediaRecorder.start(250);
 			isRecording = true;
 
 			// Track recording duration
@@ -264,7 +280,7 @@
 	 * Uses AudioContext to decode and resample.
 	 */
 	async function convertToWav(audioBlob) {
-		const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+		const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 		try {
 			const arrayBuffer = await audioBlob.arrayBuffer();
 			const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -443,19 +459,16 @@
 		</div>
 	{/if}
 
-	<!-- Recording indicator -->
+	<!-- Recording indicator with waveform -->
 	{#if isRecording}
-		<div class="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
-			<div class="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-			<span class="text-red-400 text-sm font-medium">Recording... {formatRecordingTime(recordingDuration)}</span>
-			<div class="flex-1"></div>
-			<button
-				onclick={stopRecording}
-				class="flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-			>
-				<Square size={14} />
-				Stop
-			</button>
+		<div class="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 space-y-2">
+			<div class="flex items-center gap-3">
+				<div class="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+				<span class="text-red-400 text-sm font-medium">Recording... {formatRecordingTime(recordingDuration)}</span>
+			</div>
+			{#if activeStream}
+				<Waveform stream={activeStream} />
+			{/if}
 		</div>
 	{/if}
 
@@ -480,6 +493,9 @@
 				<span>Stop</span>
 			{:else if sttModelMissing}
 				<AlertTriangle size={16} class="text-amber-400" />
+				<span>Dictate</span>
+			{:else}
+				<Mic size={16} />
 				<span>Dictate</span>
 			{/if}
 		</button>

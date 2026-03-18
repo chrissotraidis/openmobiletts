@@ -200,6 +200,7 @@
 	};
 
 	const displayVoice = $derived(voiceDisplayNames[voiceName] || voiceName);
+	const displayTitle = $derived(genInputText ? genInputText.split('\n')[0].slice(0, 50) : displayVoice);
 
 	async function downloadCurrentAudio() {
 		const blob = playerStore.getAudioBlob();
@@ -396,9 +397,9 @@
 					{/if}
 				</span>
 
-				<!-- Voice name (compact bar) -->
-				<span class="text-[11px] text-slate-600 truncate flex-1">
-					{displayVoice}
+				<!-- Title (compact bar) -->
+				<span class="text-[11px] text-slate-400 truncate flex-1">
+					{displayTitle}
 				</span>
 
 				<!-- Speed (compact) -->
@@ -562,8 +563,8 @@
 					<h3 class="text-lg font-semibold text-slate-200">Generating Speech</h3>
 					<p class="text-sm text-slate-500">{genProgressPct}% · Chunk {genChunksReceived} of {genTotalChunks > 0 ? '' : '~'}{genEstimatedTotal} · {formatElapsed(genElapsed)}</p>
 				{:else}
-					<h3 class="text-lg font-semibold text-slate-200">{displayVoice}</h3>
-					<p class="text-sm text-slate-500">{speed.toFixed(1)}x generation speed</p>
+					<h3 class="text-lg font-semibold text-slate-200 line-clamp-1">{displayTitle}</h3>
+					<p class="text-sm text-slate-500">{displayVoice} · {speed.toFixed(1)}x</p>
 				{/if}
 			</div>
 
@@ -715,10 +716,10 @@
 				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
 					<AlertTriangle size={20} class="text-red-400" />
 				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Discard Audio?</h3>
+				<h3 class="text-lg font-semibold text-slate-200">Stop Playback?</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-6">
-				This will stop playback and discard the current audio. If this took a long time to generate, you may want to keep it.
+				This will stop the current audio. You can replay it from History anytime.
 			</p>
 			<div class="flex gap-3">
 				<button
@@ -731,7 +732,7 @@
 					onclick={() => { playerStore.stop(); playlistStore.clear(); showStopConfirm = false; showQueue = false; }}
 					class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium transition-colors"
 				>
-					Discard
+					Stop
 				</button>
 			</div>
 		</div>

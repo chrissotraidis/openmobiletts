@@ -31,6 +31,13 @@ object AudioDecoder {
     fun decode(file: File): FloatArray {
         AppLog.i(TAG, "Decoding audio file: ${file.name} (${file.length() / 1024} KB)")
 
+        // Fast path: parse WAV files directly without MediaExtractor
+        // (MediaExtractor doesn't reliably support WAV on all Android versions)
+        if (isWavFile(file)) {
+            AppLog.i(TAG, "WAV detected — using direct PCM parser")
+            return decodeWavDirect(file)
+        }
+
         val extractor = MediaExtractor()
         extractor.setDataSource(file.absolutePath)
 
@@ -221,5 +228,86 @@ object AudioDecoder {
 
         AppLog.i(TAG, "Resampled: ${sampleRate}Hz → ${TARGET_SAMPLE_RATE}Hz, ${mono.size} → ${resampled.size} samples")
         return resampled
+    }
+
+    /**
+     * Check if a file is a WAV file by reading the RIFF header.
+     */
+    private fun isWavFile(file: File): Boolean {
+        if (file.length() < 44) return false
+        val header = ByteArray(4)
+        file.inputStream().use { it.read(header) }
+        return header[0] == 'R'.code.toByte() &&
+               header[1] == 'I'.code.toByte() &&
+               header[2] == 'F'.code.toByte() &&
+               header[3] == 'F'.code.toByte()
+    }
+
+    /**
+     * Decode a WAV file directly without MediaExtractor.
+     * Parses the RIFF/WAV header, extracts PCM data, resamples to 16kHz mono.
+     */
+    private fun decodeWavDirect(file: File): FloatArray {
+        val bytes = file.readBytes()
+
+        // Parse WAV header
+        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+
+        // Skip RIFF header (4 bytes "RIFF" + 4 bytes size + 4 bytes "WAVE")
+        bb.position(12)
+
+        var sampleRate = 16000
+        var channels = 1
+        var bitsPerSample = 16
+        var dataOffset = 0
+        var dataSize = 0
+
+        // Read chunks until we find "fmt " and "data"
+        while (bb.position() < bytes.size - 8) {
+            val chunkId = ByteArray(4)
+            bb.get(chunkId)
+            val chunkSize = bb.int
+            val chunkName = String(chunkId)
+
+            when (chunkName) {
+                "fmt " -> {
+                    val audioFormat = bb.short  // 1 = PCM
+                    channels = bb.short.toInt()
+                    sampleRate = bb.int
+                    bb.int  // byte rate
+                    bb.short  // block align
+                    bitsPerSample = bb.short.toInt()
+                    // Skip any extra fmt bytes
+                    val remaining = chunkSize - 16
+                    if (remaining > 0) bb.position(bb.position() + remaining)
+                }
+                "data" -> {
+                    dataOffset = bb.position()
+                    dataSize = chunkSize
+                    break  // Found data chunk
+                }
+                else -> {
+                    // Skip unknown chunk (RIFF spec: odd-sized chunks are padded to even boundary)
+                    bb.position(bb.position() + chunkSize + (chunkSize % 2))
+                }
+            }
+        }
+
+        if (dataOffset == 0 || dataSize == 0) {
+            throw IllegalArgumentException("Invalid WAV file — no data chunk found")
+        }
+
+        AppLog.i(TAG, "WAV: ${sampleRate}Hz, ${channels}ch, ${bitsPerSample}bit, ${dataSize} bytes PCM")
+
+        // Extract PCM samples as ShortArray
+        val numSamples = dataSize / (bitsPerSample / 8)
+        val samples = ShortArray(numSamples)
+        bb.position(dataOffset)
+        for (i in 0 until numSamples) {
+            if (bb.remaining() < 2) break
+            samples[i] = bb.short
+        }
+
+        return resampleAndMix(samples, sampleRate, channels)
     }
 }

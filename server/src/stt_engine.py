@@ -56,21 +56,36 @@ class SttEngine:
 
         logger.info(f"Initializing Moonshine v2 STT from: {model_path}")
 
-        # Check for merged vs split decoder
-        merged_decoder = model_path / "decoder.onnx"
-        if merged_decoder.exists():
+        # Discover actual filenames — INT8 models use ".int8.onnx" suffix
+        import glob
+        onnx_files = [f.name for f in model_path.iterdir() if f.suffix == ".onnx"]
+
+        encoder = next((f for f in onnx_files if f.startswith("encode")), None)
+        preprocessor = next((f for f in onnx_files if f.startswith("preprocess")), None)
+        merged = next((f for f in onnx_files if f.startswith("decoder") and not f.startswith("uncached") and not f.startswith("cached")), None)
+        uncached = next((f for f in onnx_files if f.startswith("uncached_decode")), None)
+        cached = next((f for f in onnx_files if f.startswith("cached_decode")), None)
+
+        if not encoder or not preprocessor:
+            raise FileNotFoundError(f"Missing encoder or preprocessor in {model_path}. Found: {onnx_files}")
+
+        logger.info(f"Model files: encoder={encoder}, preprocessor={preprocessor}, merged={merged}, uncached={uncached}, cached={cached}")
+
+        if merged:
             moonshine_config = {
-                "preprocessor": str(model_path / "preprocess.onnx"),
-                "encoder": str(model_path / "encode.onnx"),
-                "merged_decoder": str(merged_decoder),
+                "preprocessor": str(model_path / preprocessor),
+                "encoder": str(model_path / encoder),
+                "merged_decoder": str(model_path / merged),
+            }
+        elif uncached and cached:
+            moonshine_config = {
+                "preprocessor": str(model_path / preprocessor),
+                "encoder": str(model_path / encoder),
+                "uncached_decoder": str(model_path / uncached),
+                "cached_decoder": str(model_path / cached),
             }
         else:
-            moonshine_config = {
-                "preprocessor": str(model_path / "preprocess.onnx"),
-                "encoder": str(model_path / "encode.onnx"),
-                "uncached_decoder": str(model_path / "uncached_decode.onnx"),
-                "cached_decoder": str(model_path / "cached_decode.onnx"),
-            }
+            raise FileNotFoundError(f"No decoder files found in {model_path}. Found: {onnx_files}")
 
         self._recognizer = sherpa_onnx.OfflineRecognizer.from_moonshine(
             tokens=str(model_path / "tokens.txt"),
