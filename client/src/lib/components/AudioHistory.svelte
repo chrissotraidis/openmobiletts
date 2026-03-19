@@ -6,7 +6,7 @@
 	import { getCachedAudio, cacheAudio, getCachedIds } from '$lib/services/audioCache';
 	import { apiUrl } from '$lib/services/api';
 	import TextDisplay from '$lib/components/TextDisplay.svelte';
-	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download, ListPlus, Check, ArrowLeft, BookOpen, CircleCheck, CircleDashed } from 'lucide-svelte';
+	import { Play, Trash2, Clock, Volume2, Loader2, AlertTriangle, Download, ListPlus, Check, ArrowLeft, BookOpen, CircleCheck, CircleDashed, Pencil, X } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
 	let history = $state([]);
@@ -20,6 +20,8 @@
 	let viewingEntry = $state(null); // When set, shows reader/detail view
 	let cachedIds = $state(new Set()); // Track which entries have cached audio
 	let activeHistoryId = $state(null); // History entry currently being generated
+	let isRenaming = $state(false);
+	let renameValue = $state('');
 
 	const unsubs = [
 		historyStore.subscribe((h) => (history = h)),
@@ -90,8 +92,9 @@
 
 	function openReader(entry) {
 		viewingEntry = entry;
+		isRenaming = false;
 		// Push browser history state so Android back button returns to the list
-		history.pushState({ tab: 'history', view: 'reader' }, '');
+		window.history.pushState({ tab: 'history', view: 'reader' }, '');
 
 		// Don't trigger playback if this entry is already being generated
 		if (activeHistoryId === entry.id && playerState === PlayState.GENERATING) return;
@@ -105,6 +108,29 @@
 
 	function closeReader() {
 		viewingEntry = null;
+		isRenaming = false;
+	}
+
+	function startRename() {
+		renameValue = viewingEntry?.title || viewingEntry?.preview || '';
+		isRenaming = true;
+	}
+
+	function confirmRename() {
+		if (!viewingEntry || !renameValue.trim()) return;
+		const newTitle = renameValue.trim();
+		historyStore.updateEntry(viewingEntry.id, { title: newTitle });
+		viewingEntry = { ...viewingEntry, title: newTitle };
+		isRenaming = false;
+	}
+
+	function cancelRename() {
+		isRenaming = false;
+	}
+
+	/** Get display title for an entry — uses title field, falls back to preview */
+	function entryTitle(entry) {
+		return entry.title || entry.preview;
 	}
 
 	function handleClearAll() {
@@ -274,7 +300,7 @@
 				<h3 class="text-lg font-semibold text-slate-200">Clear History</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-6">
-				This will permanently delete all {history.length} generation{history.length !== 1 ? 's' : ''} and their cached audio. This action cannot be undone.
+				This will permanently delete all {history.length} entr{history.length !== 1 ? 'ies' : 'y'} and their cached audio. This action cannot be undone.
 			</p>
 			<div class="flex gap-3">
 				<button
@@ -304,10 +330,10 @@
 				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
 					<AlertTriangle size={20} class="text-red-400" />
 				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Delete Generation?</h3>
+				<h3 class="text-lg font-semibold text-slate-200">Delete Entry?</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-2">
-				This will permanently delete this generation and its cached audio.
+				This will permanently delete this entry and its cached audio.
 			</p>
 			<p class="text-xs text-slate-500 mb-6 line-clamp-2">
 				"{pendingDeleteEntry.preview}"
@@ -337,12 +363,34 @@
 		<div class="flex items-center gap-3">
 			<button
 				onclick={closeReader}
-				class="w-9 h-9 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center transition-colors"
+				class="w-9 h-9 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center transition-colors shrink-0"
 			>
 				<ArrowLeft size={16} class="text-slate-400" />
 			</button>
 			<div class="flex-1 min-w-0">
-				<h3 class="text-sm font-semibold text-slate-300 truncate">{viewingEntry.preview}</h3>
+				{#if isRenaming}
+					<div class="flex items-center gap-2">
+						<input
+							type="text"
+							bind:value={renameValue}
+							onkeydown={(e) => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') cancelRename(); }}
+							class="flex-1 bg-slate-800 border border-white/20 rounded-lg px-2 py-1 text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+						/>
+						<button onclick={confirmRename} class="p-1 text-emerald-400 hover:text-emerald-300" title="Save">
+							<Check size={16} />
+						</button>
+						<button onclick={cancelRename} class="p-1 text-slate-500 hover:text-slate-300" title="Cancel">
+							<X size={16} />
+						</button>
+					</div>
+				{:else}
+					<div class="flex items-center gap-2">
+						<h3 class="text-sm font-semibold text-slate-300 truncate">{entryTitle(viewingEntry)}</h3>
+						<button onclick={startRename} class="p-1 text-slate-600 hover:text-slate-300 transition-colors shrink-0" title="Rename">
+							<Pencil size={12} />
+						</button>
+					</div>
+				{/if}
 				<div class="flex items-center gap-3 mt-0.5">
 					<span class="text-[10px] text-slate-500 flex items-center gap-1">
 						<Volume2 size={10} />
@@ -414,6 +462,17 @@
 
 		<!-- Text Display with synchronized highlighting and click-to-seek -->
 		<TextDisplay />
+
+		<!-- Fallback: show full text when audio is not active (text-only entries or idle state) -->
+		{#if !(playerState === PlayState.GENERATING || playerState === PlayState.PLAYING || playerState === PlayState.PAUSED)}
+			<div class="p-5 bg-slate-900/40 border border-white/5 rounded-2xl">
+				<div class="flex items-center gap-2 mb-4">
+					<BookOpen size={16} class="text-blue-400" />
+					<h3 class="text-sm font-semibold text-slate-400">Text</h3>
+				</div>
+				<p class="text-[15px] leading-7 text-slate-300 whitespace-pre-line">{viewingEntry.text}</p>
+			</div>
+		{/if}
 	</div>
 {:else if history.length === 0}
 	<div class="flex flex-col items-center justify-center py-20 text-center">
@@ -426,7 +485,7 @@
 {:else}
 	<div class="space-y-2">
 		<div class="flex items-center justify-between mb-4">
-			<h3 class="text-sm font-semibold text-slate-400">{history.length} generation{history.length !== 1 ? 's' : ''}</h3>
+			<h3 class="text-sm font-semibold text-slate-400">{history.length} entr{history.length !== 1 ? 'ies' : 'y'}</h3>
 			<button
 				onclick={() => showClearModal = true}
 				class="text-[10px] text-slate-600 hover:text-red-400 transition-colors"
@@ -460,7 +519,7 @@
 						onclick={() => openReader(entry)}
 						class="flex-1 min-w-0 text-left"
 					>
-						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed whitespace-pre-line">{entry.preview}</p>
+						<p class="text-sm text-slate-300 line-clamp-2 leading-relaxed whitespace-pre-line">{entryTitle(entry)}</p>
 						<div class="flex items-center gap-3 mt-2 flex-wrap">
 							<span class="text-[10px] text-slate-500 flex items-center gap-1">
 								<Volume2 size={10} />

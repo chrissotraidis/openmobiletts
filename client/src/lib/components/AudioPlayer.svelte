@@ -239,18 +239,123 @@
 		expanded = true;
 		onopen();
 	}
+
+	// ── Swipe gesture tracking (finger-tracking) ──────────
+	let touchStartY = 0;
+	let touchStartX = 0;
+	let touchStartTime = 0;
+	let touchWasSeeking = false;
+	let dragOffsetY = $state(0); // live translateY offset for expanded view
+	let isDraggingExpanded = $state(false); // true while finger is actively dragging
+	let isSnapping = $state(false); // true during snap-back/close animation
+	const SWIPE_THRESHOLD = 60;
+	const VELOCITY_THRESHOLD = 0.4; // px/ms — fast flick bypasses position threshold
+
+	// Compact bar: swipe up to open (threshold-based is fine for opening)
+	function handleCompactTouchStart(e) {
+		touchStartY = e.touches[0].clientY;
+		touchStartX = e.touches[0].clientX;
+	}
+
+	function handleCompactTouchEnd(e) {
+		const dy = touchStartY - e.changedTouches[0].clientY;
+		const dx = Math.abs(touchStartX - e.changedTouches[0].clientX);
+		if (dy > SWIPE_THRESHOLD && dy > dx && !isError) {
+			expanded = true;
+			onopen();
+		}
+	}
+
+	// Expanded view: finger-tracked swipe down to close
+	function handleExpandedTouchStart(e) {
+		touchStartY = e.touches[0].clientY;
+		touchStartX = e.touches[0].clientX;
+		touchStartTime = Date.now();
+		touchWasSeeking = isSeeking;
+
+		// Don't start drag if touching inside a scrollable queue that isn't at top
+		const scrollable = e.target.closest('.queue-scroll-area');
+		if (scrollable && scrollable.scrollTop > 0) return;
+
+		// Don't start drag if touching interactive elements (seek bar, buttons, speed menu)
+		if (e.target.closest('[data-no-swipe]') || e.target.closest('button') || e.target.closest('select')) return;
+
+		isDraggingExpanded = true;
+		isSnapping = false;
+		dragOffsetY = 0;
+	}
+
+	function handleExpandedTouchMove(e) {
+		if (!isDraggingExpanded || touchWasSeeking || isSeeking) return;
+
+		const dy = e.touches[0].clientY - touchStartY;
+		const dx = Math.abs(e.touches[0].clientX - touchStartX);
+
+		// Only track downward vertical drags (must be more vertical than horizontal)
+		if (dy > 0 && dy > dx * 0.5) {
+			// Apply rubber-band resistance after 100px
+			dragOffsetY = dy < 100 ? dy : 100 + (dy - 100) * 0.4;
+			e.preventDefault(); // prevent scroll while dragging
+		} else if (dy <= 0) {
+			dragOffsetY = 0;
+		}
+	}
+
+	function handleExpandedTouchEnd(e) {
+		if (!isDraggingExpanded) return;
+		isDraggingExpanded = false;
+
+		if (touchWasSeeking || isSeeking) {
+			dragOffsetY = 0;
+			return;
+		}
+
+		const dy = e.changedTouches[0].clientY - touchStartY;
+		const elapsed = Date.now() - touchStartTime;
+		const velocity = elapsed > 0 ? dy / elapsed : 0;
+
+		// Close if dragged past threshold OR flicked fast enough
+		if (dragOffsetY > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD) {
+			// Animate out — set offset to full height and then close
+			isSnapping = true;
+			dragOffsetY = window.innerHeight;
+			setTimeout(() => {
+				expanded = false;
+				showExpandedQueue = false;
+				dragOffsetY = 0;
+				isSnapping = false;
+				onclose();
+			}, 250);
+		} else {
+			// Snap back to open position
+			isSnapping = true;
+			dragOffsetY = 0;
+			setTimeout(() => { isSnapping = false; }, 250);
+		}
+	}
 </script>
 
 <!-- Queue Panel (slides up above the player bar) -->
 {#if showQueue && hasQueue}
+	<!-- Backdrop to dismiss queue on tap outside -->
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div
+		class="fixed inset-0 z-28 bg-black/30"
+		onclick={() => showQueue = false}
+	></div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-29 bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 max-h-[50vh] overflow-y-auto custom-scrollbar"
+		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-29 bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 rounded-t-2xl shadow-2xl queue-slide-up"
+		style="max-height: min(50vh, {queueItems.length * 72 + 56}px)"
 		onpointermove={handleDragMove}
 		onpointerup={handleDragEnd}
 		onpointercancel={handleDragEnd}
 	>
-		<div class="px-4 py-3 flex items-center justify-between border-b border-white/5">
+		<!-- Swipe handle -->
+		<div class="flex justify-center pt-2 pb-0">
+			<div class="w-8 h-1 bg-white/20 rounded-full"></div>
+		</div>
+		<div class="px-4 py-2 flex items-center justify-between border-b border-white/5">
 			<div class="flex items-center gap-2">
 				<ListMusic size={14} class="text-blue-400" />
 				<span class="text-xs font-semibold text-slate-400">Queue</span>
@@ -273,7 +378,7 @@
 				</button>
 			</div>
 		</div>
-		<div bind:this={queueListEl}>
+		<div bind:this={queueListEl} class="overflow-y-auto custom-scrollbar" style="max-height: calc(min(50vh, {queueItems.length * 72 + 56}px) - 56px)">
 			{#each queueItems as item, idx (item.id)}
 				{@const isDragging = dragIndex === idx}
 				{@const isDropTarget = dragIndex >= 0 && dragOverIndex === idx && dragIndex !== idx}
@@ -334,6 +439,8 @@
 		class="fixed bottom-[72px] md:bottom-0 left-0 md:left-64 right-0 z-30 bg-[#0d1117]/95 backdrop-blur-md border-t border-white/5"
 		style="touch-action: manipulation"
 		onclick={openExpanded}
+		ontouchstart={handleCompactTouchStart}
+		ontouchend={handleCompactTouchEnd}
 	>
 		{#if isError}
 			<div class="px-4 py-3 flex items-center gap-3">
@@ -459,9 +566,21 @@
 
 <!-- Expanded "Now Playing" View -->
 {#if expanded && isVisible && !isError}
-	<div class="fixed inset-0 z-50 bg-[#0a0c10] flex flex-col expand-slide-up pb-[72px] md:pb-0" style="touch-action: manipulation">
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 bg-[#0a0c10] flex flex-col {dragOffsetY === 0 && !isDraggingExpanded ? 'expand-slide-up' : ''} pb-[72px] md:pb-0"
+		style="transform: translateY({dragOffsetY}px); {isSnapping ? 'transition: transform 0.25s ease-out;' : ''} touch-action: pan-x;"
+		ontouchstart={handleExpandedTouchStart}
+		ontouchmove={handleExpandedTouchMove}
+		ontouchend={handleExpandedTouchEnd}
+	>
+		<!-- Swipe handle indicator -->
+		<div class="flex justify-center pt-3 pb-1">
+			<div class="w-10 h-1 bg-white/20 rounded-full"></div>
+		</div>
+
 		<!-- Header with close and queue toggle -->
-		<div class="flex items-center justify-between px-6 pt-6 pb-4">
+		<div class="flex items-center justify-between px-6 pt-2 pb-4">
 			<button
 				onclick={() => { expanded = false; showExpandedQueue = false; onclose(); }}
 				class="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-white transition-colors rounded-full hover:bg-white/5"
@@ -483,7 +602,7 @@
 
 		{#if showExpandedQueue}
 			<!-- Queue list in expanded view -->
-			<div class="flex-1 overflow-y-auto px-4 custom-scrollbar">
+			<div class="flex-1 overflow-y-auto px-4 custom-scrollbar queue-scroll-area">
 				{#if queueItems.length === 0}
 					<div class="flex flex-col items-center justify-center h-full text-slate-600">
 						<ListMusic size={40} class="mb-3 opacity-50" />
@@ -570,7 +689,7 @@
 
 			<!-- Seek bar (large, touch-friendly) -->
 			<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-			<div class="space-y-2">
+			<div class="space-y-2" data-no-swipe>
 				<div
 					class="relative h-10 flex items-center cursor-pointer group"
 					style="touch-action: none"
@@ -758,6 +877,21 @@
 		from {
 			transform: translateY(100%);
 			opacity: 0.5;
+		}
+		to {
+			transform: translateY(0);
+			opacity: 1;
+		}
+	}
+
+	.queue-slide-up {
+		animation: queueSlideUp 0.2s ease-out;
+	}
+
+	@keyframes queueSlideUp {
+		from {
+			transform: translateY(100%);
+			opacity: 0;
 		}
 		to {
 			transform: translateY(0);

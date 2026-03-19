@@ -44,7 +44,7 @@ class KokoroBackend(TTSBackend):
         voices_by_lang = {
             'a': [
                 'af_heart', 'af_nova', 'af_sky', 'af_bella', 'af_sarah',
-                'am_adam', 'am_michael', 'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis'
+                'am_adam', 'am_michael',
             ],
             'b': [
                 'bf_emma', 'bf_isabella', 'bm_george', 'bm_lewis'

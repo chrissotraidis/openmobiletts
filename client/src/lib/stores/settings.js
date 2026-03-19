@@ -18,13 +18,8 @@ function loadSettings() {
 		const stored = localStorage.getItem(STORAGE_KEY);
 		if (stored) {
 			const settings = { ...defaults, ...JSON.parse(stored) };
-			// One-time migration: the old range slider had a drag bug that
-			// accidentally set speed to 0.5. Reset to 1.0 for affected users.
-			if (!settings._migratedSpeedV1) {
-				settings.defaultSpeed = defaults.defaultSpeed;
-				settings._migratedSpeedV1 = true;
-				localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-			}
+			// Generation speed is always 1.0 — playback speed handles adjustments
+			settings.defaultSpeed = 1.0;
 			return settings;
 		}
 	} catch {

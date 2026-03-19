@@ -36,10 +36,14 @@ function createHistoryStore() {
 		add(entry) {
 			// Use timestamp * 1000 + counter to avoid collision on rapid calls
 			const id = Date.now() * 1000 + (idCounter++ % 1000);
+			// Auto-generate title from first line (max 60 chars)
+			const firstLine = entry.text.split('\n')[0].trim();
+			const title = entry.title || (firstLine.length > 60 ? firstLine.slice(0, 57) + '...' : firstLine);
 			update((entries) => {
 				const next = [
 					{
 						id,
+						title,
 						text: entry.text,
 						voice: entry.voice,
 						speed: entry.speed,
@@ -52,6 +56,17 @@ function createHistoryStore() {
 				return next;
 			});
 			return id;
+		},
+
+		/** Update fields on an existing entry (e.g. rename). */
+		updateEntry(id, fields) {
+			update((entries) => {
+				const next = entries.map((e) =>
+					e.id === id ? { ...e, ...fields } : e
+				);
+				saveHistory(next);
+				return next;
+			});
 		},
 
 		remove(id) {
