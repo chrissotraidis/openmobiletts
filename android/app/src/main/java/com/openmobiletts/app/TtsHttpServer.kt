@@ -62,6 +62,7 @@ class TtsHttpServer(
                 uri == "/api/engine/switch" && method == Method.POST -> handleEngineSwitch(session)
                 uri == "/api/tts/stream" && method == Method.POST -> handleTtsStream(session)
                 uri.startsWith("/api/tts/jobs/") -> handleJobRequest(session, uri)
+                uri == "/api/logs/clear" && method == Method.POST -> handleLogsClear()
                 uri.startsWith("/api/logs") -> handleLogs()
                 uri == "/api/documents/upload" && method == Method.POST -> handleDocumentUpload(session)
                 uri == "/api/stt/transcribe" && method == Method.POST -> handleSttTranscribe(session)
@@ -123,6 +124,11 @@ class TtsHttpServer(
 
     private fun handleLogs(): Response {
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, AppLog.exportJson())
+    }
+
+    private fun handleLogsClear(): Response {
+        AppLog.clear()
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, """{"cleared":true}""")
     }
 
     private fun handleDocumentUpload(session: IHTTPSession): Response {

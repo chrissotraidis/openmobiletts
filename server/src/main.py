@@ -17,7 +17,7 @@ from .config import settings
 from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
 from .tts_engine import EngineManager
-from .logging_config import setup_logging, get_logger, preview_text, export_logs_json
+from .logging_config import setup_logging, get_logger, preview_text, export_logs_json, clear_logs
 from .stt_engine import SttEngine
 from .export_manager import export_pdf, export_markdown, export_plaintext
 from .project_storage import ProjectStorage
@@ -551,6 +551,14 @@ async def export_logs(max_lines: int = 500):
     """
     logger.info(f"Log export requested: max_lines={max_lines}")
     return export_logs_json(max_lines=min(max_lines, 2000))  # Cap at 2000
+
+
+@app.post("/api/logs/clear")
+async def clear_logs_endpoint():
+    """Clear all server log files."""
+    clear_logs()
+    logger.info("Logs cleared")
+    return {"cleared": True}
 
 
 # Serve built SvelteKit static files

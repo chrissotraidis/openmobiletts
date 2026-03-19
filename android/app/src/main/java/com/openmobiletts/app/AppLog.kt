@@ -178,6 +178,30 @@ object AppLog {
         put("message", entry.message)
     }
 
+    /**
+     * Clear all log files and the in-memory buffer.
+     */
+    fun clear() {
+        // Clear in-memory buffer
+        buffer.clear()
+
+        // Close current writer so we can delete the file
+        writeExecutor.submit {
+            try {
+                currentWriter?.close()
+                currentWriter = null
+                currentDay = null
+            } catch (_: Exception) {}
+        }.get()
+
+        // Delete all log files on disk
+        val dir = logDir ?: return
+        dir.listFiles { f -> f.name.startsWith("tts-") && f.name.endsWith(".log") }
+            ?.forEach { it.delete() }
+
+        i("AppLog", "Logs cleared")
+    }
+
     private fun cleanOldLogs(dir: File) {
         val cutoff = System.currentTimeMillis() - RETENTION_DAYS * 24L * 60 * 60 * 1000
         dir.listFiles { f -> f.name.startsWith("tts-") && f.name.endsWith(".log") }

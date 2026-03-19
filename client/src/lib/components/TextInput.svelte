@@ -2,19 +2,19 @@
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
+	import { draftStore } from '$lib/stores/draft';
 	import Waveform from '$lib/components/Waveform.svelte';
 	import { uploadDocument, fetchVoices, fetchEngines, transcribeAudio, exportDocument, fetchSttModels } from '$lib/services/api';
-	import { Upload, Loader2, Clock, Play, ChevronDown, Cpu, X, Mic, Square, Download, AlertTriangle } from 'lucide-svelte';
+	import { Upload, Loader2, Play, ChevronDown, Cpu, X, Mic, Square, Download, AlertTriangle, Save } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
-	let text = $state('');
+	let text = $state(draftStore.get());
 	let isUploading = $state(false);
 	let uploadError = $state('');
 	let fileInput;
 	let voices = $state([]);
 	let selectedLang = $state('');
 	let activeEngine = $state('');
-	let showSpeedPicker = $state(false);
 	const isAndroid = typeof window !== 'undefined' && !!window.Android;
 
 	// Export state
@@ -33,7 +33,19 @@
 	let recordingTimer = null;
 	let activeStream = $state(null);
 
-	const speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+	// Two-way sync with draft store: persist across tab switches and respond to external clears
+	const unsubDraft = draftStore.subscribe((v) => {
+		if (v !== text) {
+			text = v;
+		}
+	});
+	$effect(() => {
+		const v = text;
+		if (v !== draftStore.get()) {
+			draftStore.set(v);
+		}
+	});
+	onDestroy(() => unsubDraft());
 
 	// Group voices by language
 	const languages = $derived(() => {
@@ -85,9 +97,6 @@
 
 		// Close dropdowns on outside tap
 		function handleGlobalClick(e) {
-			if (showSpeedPicker && !e.target.closest('[data-speed-picker]')) {
-				showSpeedPicker = false;
-			}
 			if (showExportPicker && !e.target.closest('[data-export-picker]')) {
 				showExportPicker = false;
 			}
@@ -113,18 +122,17 @@
 
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
-		showSpeedPicker = false;
 
 		const historyId = historyStore.add({
 			text: text.trim(),
 			voice: $settingsStore.defaultVoice,
-			speed: $settingsStore.defaultSpeed,
+			speed: 1.0,
 		});
 
 		playerStore.generate(
 			text.trim(),
 			$settingsStore.defaultVoice,
-			$settingsStore.defaultSpeed,
+			1.0,
 			$settingsStore.autoPlay,
 			historyId
 		);
@@ -188,7 +196,7 @@
 			const activeModel = models.find(m => m.active || m.downloaded);
 			sttModelMissing = !activeModel;
 			if (!activeModel) {
-				uploadError = 'Speech-to-text model not installed. Go to Settings → Storage & Speech-to-Text to download it.';
+				uploadError = 'Speech-to-text model not installed. Go to Settings → Speech-to-Text to download it.';
 				return;
 			}
 		} catch {
@@ -238,8 +246,15 @@
 					const result = await transcribeAudio(wavBlob);
 
 					if (result.text && result.text.trim()) {
+						const transcribedText = result.text.trim();
 						// Append to existing text with newline separator
-						text = text ? text + '\n' + result.text.trim() : result.text.trim();
+						text = text ? text + '\n' + transcribedText : transcribedText;
+						// Auto-save the dictation segment to history as a text-only entry
+						historyStore.add({
+							text: transcribedText,
+							voice: $settingsStore.defaultVoice,
+							speed: 1.0,
+						});
 					} else {
 						uploadError = 'No speech detected. Try again.';
 					}
@@ -526,7 +541,7 @@
 		<!-- Spacer -->
 		<div class="flex-1"></div>
 
-		<!-- Engine + Language + Voice + Speed (inline, wraps on mobile) -->
+		<!-- Engine + Language + Voice (inline, wraps on mobile) -->
 		<div class="flex items-center gap-2 flex-wrap">
 			{#if activeEngine}
 				<span class="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-2 py-2 font-medium whitespace-nowrap">
@@ -573,33 +588,26 @@
 				</div>
 			{/if}
 
-			<!-- Speed selector (tap-based, not a slider — prevents accidental drag changes on mobile) -->
-			<div class="relative" style="touch-action: manipulation" data-speed-picker>
-				<button
-					onclick={() => showSpeedPicker = !showSpeedPicker}
-					disabled={isBusy}
-					class="flex items-center gap-1.5 bg-slate-900/60 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono transition-colors hover:bg-slate-900/80 disabled:opacity-50 min-h-[36px] select-none"
-					style="touch-action: manipulation"
-				>
-					<Clock size={12} class="text-slate-500" />
-					<span class="text-slate-300">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
-					<ChevronDown size={10} class="text-slate-500" />
-				</button>
-				{#if showSpeedPicker}
-					<div class="absolute bottom-full mb-1 right-0 bg-slate-800 border border-white/10 rounded-lg shadow-xl py-1 min-w-[80px] z-50">
-						{#each speedPresets as s}
-							<button
-								onclick={() => { settingsStore.update('defaultSpeed', s); showSpeedPicker = false; }}
-								class="w-full px-3 py-2.5 text-left text-xs font-mono transition-colors select-none {$settingsStore.defaultSpeed === s ? 'text-blue-400 bg-blue-500/10' : 'text-slate-300 hover:bg-white/5'}"
-								style="touch-action: manipulation"
-							>
-								{s.toFixed(1)}x
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
 		</div>
+
+		<!-- Save as Note Button -->
+		<button
+			onclick={() => {
+				if (!text.trim()) return;
+				historyStore.add({
+					text: text.trim(),
+					voice: $settingsStore.defaultVoice,
+					speed: 1.0,
+				});
+				text = '';
+			}}
+			disabled={!text.trim() || isBusy}
+			class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
+			title="Save text to history without generating audio"
+		>
+			<Save size={16} />
+			<span>Save</span>
+		</button>
 
 		<!-- Generate Button -->
 		<button

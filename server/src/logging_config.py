@@ -161,6 +161,30 @@ def read_logs(max_lines: int = 500, level: str = None) -> List[dict]:
     return entries
 
 
+def clear_logs():
+    """Clear all log files. Truncates the active handler's stream directly
+    to avoid fd/inode mismatch, and deletes rotated backups."""
+    root_logger = logging.getLogger()
+    # Flush, then truncate the handler's own stream so the open fd stays valid
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and hasattr(handler, 'stream'):
+            try:
+                handler.flush()
+                handler.stream.seek(0)
+                handler.stream.truncate(0)
+                handler.stream.flush()
+                os.fsync(handler.stream.fileno())
+            except (IOError, OSError):
+                pass
+    # Delete rotated backup files (handler doesn't hold these open)
+    for log_file in get_log_files():
+        if log_file != LOG_FILE:
+            try:
+                os.remove(log_file)
+            except (IOError, OSError):
+                continue
+
+
 def export_logs_json(max_lines: int = 1000) -> dict:
     """Export logs as a JSON-serializable dict for mobile export.
 

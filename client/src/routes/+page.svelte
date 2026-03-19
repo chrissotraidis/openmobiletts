@@ -9,11 +9,15 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { playerStore } from '$lib/stores/player';
 	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine, fetchSttModels } from '$lib/services/api';
-	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Clock, Sliders, Info, RotateCcw, ChevronDown, FileDown, Download, Loader2, Wifi, CheckCircle, XCircle, Cpu, HardDrive, Trash2 } from 'lucide-svelte';
+	import { draftStore } from '$lib/stores/draft';
+	import { historyStore } from '$lib/stores/history';
+	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Sliders, Info, RotateCcw, ChevronDown, FileDown, Download, Loader2, Wifi, CheckCircle, XCircle, Cpu, HardDrive, Trash2, AlertTriangle } from 'lucide-svelte';
 
 	let isIOS = $state(false);
 	let activeTab = $state('generate');
 	let exportingLogs = $state(false);
+	let logsClearStatus = $state(''); // '' | 'clearing' | 'cleared' | 'failed'
+	let showNewConfirm = $state(false);
 	let testingConnection = $state(false);
 	let connectionStatus = $state(null); // null | 'success' | 'error'
 	let connectionMessage = $state('');
@@ -195,23 +199,6 @@
 		}
 	}
 
-	// Speed slider mapping: 1.0x at center (50%)
-	// Position 0-50: 0.5x to 1.0x, Position 50-100: 1.0x to 2.0x
-	function speedToSlider(speed) {
-		if (speed <= 1.0) {
-			return (speed - 0.5) * 100; // 0.5→0, 1.0→50
-		} else {
-			return 50 + (speed - 1.0) * 50; // 1.0→50, 2.0→100
-		}
-	}
-
-	function sliderToSpeed(position) {
-		if (position <= 50) {
-			return 0.5 + (position / 100); // 0→0.5, 50→1.0
-		} else {
-			return 1.0 + ((position - 50) / 50); // 50→1.0, 100→2.0
-		}
-	}
 </script>
 
 <div class="flex h-screen w-full bg-[#0a0c10] text-slate-200 overflow-hidden">
@@ -292,7 +279,14 @@
 			</div>
 			{#if activeTab === 'generate'}
 				<button
-					onclick={() => { playerStore.stop(); }}
+					onclick={() => {
+						const hasDraft = draftStore.get().trim();
+						if (hasDraft) {
+							showNewConfirm = true;
+						} else {
+							playerStore.stop();
+						}
+					}}
 					class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 px-3 py-1.5 rounded-lg transition-colors hover:bg-white/5"
 				>
 					<Plus size={14} />
@@ -399,34 +393,6 @@
 							{/if}
 						</div>
 
-						<!-- Default Speed -->
-						<div class="space-y-2">
-							<div class="flex justify-between items-center px-1">
-								<div class="flex items-center gap-2">
-									<Clock size={14} class="text-slate-500" />
-									<span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Default Speed</span>
-								</div>
-								<span class="text-xs font-mono text-blue-400">{$settingsStore.defaultSpeed.toFixed(1)}x</span>
-							</div>
-							<div class="py-3" style="touch-action: manipulation">
-								<input
-									type="range"
-									min="0"
-									max="100"
-									step="1"
-									value={speedToSlider($settingsStore.defaultSpeed)}
-									oninput={(e) => settingsStore.update('defaultSpeed', Math.round(sliderToSpeed(parseFloat(e.target.value)) * 10) / 10)}
-									class="w-full h-2 accent-blue-500 cursor-pointer"
-									style="touch-action: manipulation"
-								/>
-							</div>
-							<div class="flex text-[10px] text-slate-600">
-								<span class="flex-1 text-left">0.5x</span>
-								<span class="flex-1 text-center">1.0x</span>
-								<span class="flex-1 text-right">2.0x</span>
-							</div>
-						</div>
-
 						<!-- Auto-play toggle -->
 						<div class="flex items-center justify-between p-3 bg-white/5 rounded-xl">
 							<div>
@@ -507,16 +473,16 @@
 						</div>
 					</div>
 
-					<!-- Storage & STT -->
+					<!-- Speech-to-Text -->
 					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-5">
 						<div class="flex items-center gap-2">
-							<HardDrive size={18} class="text-blue-400" />
-							<h3 class="text-lg font-semibold">Storage & Speech-to-Text</h3>
+							<Mic size={18} class="text-blue-400" />
+							<h3 class="text-lg font-semibold">Speech-to-Text</h3>
 						</div>
 
 						<!-- STT Model Status -->
 						<div class="space-y-2">
-							<span class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Speech-to-Text Model</span>
+							<span class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Model</span>
 							<p class="text-[10px] text-slate-600 px-1">Required for dictation and audio file transcription.</p>
 							{#if sttModels.length > 0}
 								{#each sttModels as model}
@@ -625,6 +591,14 @@
 							{:else}
 								<p class="text-xs text-slate-500 px-1">Checking model status...</p>
 							{/if}
+						</div>
+					</div>
+
+					<!-- Data Management -->
+					<div class="p-6 bg-slate-900/40 border border-white/5 rounded-2xl space-y-5">
+						<div class="flex items-center gap-2">
+							<HardDrive size={18} class="text-blue-400" />
+							<h3 class="text-lg font-semibold">Data Management</h3>
 						</div>
 
 						<!-- Auto-Cleanup -->
@@ -757,15 +731,32 @@
 							</button>
 							<button
 								onclick={async () => {
+									logsClearStatus = 'clearing';
 									try {
 										localStorage.removeItem('openmobiletts_logs');
-										await fetch(apiUrl('/api/logs/clear'), { method: 'POST' });
-									} catch { /* silent */ }
+										const res = await fetch(apiUrl('/api/logs/clear'), { method: 'POST' });
+										logsClearStatus = res.ok ? 'cleared' : 'failed';
+									} catch {
+										logsClearStatus = 'failed';
+									}
+									setTimeout(() => { logsClearStatus = ''; }, 2000);
 								}}
-								class="flex items-center gap-2 px-4 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-xl text-sm font-medium transition-colors"
+								disabled={logsClearStatus === 'clearing'}
+								class="flex items-center gap-2 px-4 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
 							>
-								<Trash2 size={16} />
-								Clear Logs
+								{#if logsClearStatus === 'clearing'}
+									<Loader2 size={16} class="animate-spin" />
+									Clearing...
+								{:else if logsClearStatus === 'cleared'}
+									<CheckCircle size={16} class="text-emerald-400" />
+									<span class="text-emerald-400">Cleared!</span>
+								{:else if logsClearStatus === 'failed'}
+									<AlertTriangle size={16} />
+									Failed
+								{:else}
+									<Trash2 size={16} />
+									Clear Logs
+								{/if}
 							</button>
 						</div>
 					</div>
@@ -810,3 +801,51 @@
 		</nav>
 	</main>
 </div>
+
+<!-- "New" Confirmation Modal -->
+{#if showNewConfirm}
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onclick={() => showNewConfirm = false}>
+		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center">
+					<AlertTriangle size={20} class="text-amber-400" />
+				</div>
+				<h3 class="text-lg font-semibold text-slate-200">Unsaved Text</h3>
+			</div>
+			<p class="text-sm text-slate-400 mb-6">
+				You have text in the editor. Would you like to save it to history before starting fresh?
+			</p>
+			<div class="flex flex-col gap-2">
+				<button
+					onclick={() => {
+						draftStore.saveAsNote($settingsStore.defaultVoice);
+						draftStore.clear();
+						playerStore.stop();
+						showNewConfirm = false;
+					}}
+					class="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors"
+				>
+					Save to History & Start New
+				</button>
+				<button
+					onclick={() => {
+						draftStore.clear();
+						playerStore.stop();
+						showNewConfirm = false;
+					}}
+					class="w-full px-4 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-xl text-sm font-medium transition-colors"
+				>
+					Discard & Start New
+				</button>
+				<button
+					onclick={() => showNewConfirm = false}
+					class="w-full px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-medium transition-colors"
+				>
+					Cancel
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
