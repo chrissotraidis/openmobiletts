@@ -199,13 +199,13 @@ async function cleanupCache() {
 
 			request.onsuccess = () => {
 				const entries = request.result;
-				let totalSize = entries.reduce((sum, e) => sum + e.size, 0);
+				let totalSize = entries.reduce((sum, e) => sum + (e.size || 0), 0);
 				let count = entries.length;
 
 				// Remove oldest entries if over limits
 				for (let i = 0; i < entries.length && (count > MAX_ENTRIES || totalSize > MAX_SIZE_BYTES); i++) {
 					store.delete(entries[i].id);
-					totalSize -= entries[i].size;
+					totalSize -= (entries[i].size || 0);
 					count--;
 				}
 			};

@@ -62,7 +62,7 @@ class SttEngine:
 
         encoder = next((f for f in onnx_files if f.startswith("encode")), None)
         preprocessor = next((f for f in onnx_files if f.startswith("preprocess")), None)
-        merged = next((f for f in onnx_files if f.startswith("decoder") and not f.startswith("uncached") and not f.startswith("cached")), None)
+        merged = next((f for f in onnx_files if f.startswith("decoder") and "uncached" not in f and "cached" not in f), None)
         uncached = next((f for f in onnx_files if f.startswith("uncached_decode")), None)
         cached = next((f for f in onnx_files if f.startswith("cached_decode")), None)
 

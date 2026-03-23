@@ -190,7 +190,5 @@ class ProjectStorage:
             }
 
     def _generate_id(self) -> str:
-        import random
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        rand = random.randint(1000, 9999)
-        return f"proj_{timestamp}_{rand}"
+        import uuid
+        return f"proj_{uuid.uuid4().hex[:16]}"

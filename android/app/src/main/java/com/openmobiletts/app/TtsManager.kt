@@ -106,6 +106,7 @@ class TtsManager {
     }
 
     fun release() {
+        tts?.release()
         tts = null
         AppLog.i(TAG, "TTS engine released")
     }

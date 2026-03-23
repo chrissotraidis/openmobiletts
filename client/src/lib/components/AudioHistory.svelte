@@ -22,6 +22,7 @@
 	let activeHistoryId = $state(null); // History entry currently being generated
 	let isRenaming = $state(false);
 	let renameValue = $state('');
+	let playerSegments = $state([]);
 
 	const unsubs = [
 		historyStore.subscribe((h) => (history = h)),
@@ -41,6 +42,7 @@
 			}
 		}),
 		playerStore.currentHistoryId.subscribe((id) => (activeHistoryId = id)),
+		playerStore.segments.subscribe((s) => (playerSegments = s)),
 	];
 
 	async function refreshCacheStatus() {
@@ -107,8 +109,10 @@
 	}
 
 	function closeReader() {
-		viewingEntry = null;
 		isRenaming = false;
+		// Navigate back to pop the state entry pushed by openReader,
+		// which triggers handlePopState → sets viewingEntry = null
+		window.history.back();
 	}
 
 	function startRename() {
@@ -463,8 +467,8 @@
 		<!-- Text Display with synchronized highlighting and click-to-seek -->
 		<TextDisplay />
 
-		<!-- Fallback: show full text when audio is not active (text-only entries or idle state) -->
-		{#if !(playerState === PlayState.GENERATING || playerState === PlayState.PLAYING || playerState === PlayState.PAUSED)}
+		<!-- Plain text fallback — shown when TextDisplay has no segments to render -->
+		{#if !((playerState === PlayState.GENERATING || playerState === PlayState.PLAYING || playerState === PlayState.PAUSED) && playerSegments.length > 0)}
 			<div class="p-5 bg-slate-900/40 border border-white/5 rounded-2xl">
 				<div class="flex items-center gap-2 mb-4">
 					<BookOpen size={16} class="text-blue-400" />

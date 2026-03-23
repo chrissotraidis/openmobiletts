@@ -469,7 +469,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun updatePlaybackProgress(positionMs: Int, durationMs: Int) {
+        fun updatePlaybackProgress(positionMs: Double, durationMs: Double) {
             TtsService.instance?.updatePlaybackProgress(positionMs.toLong(), durationMs.toLong())
         }
 
@@ -509,13 +509,17 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Saved to Downloads: $filename", Toast.LENGTH_SHORT).show()
+                        if (!isDestroyed) {
+                            Toast.makeText(applicationContext, "Saved to Downloads: $filename", Toast.LENGTH_SHORT).show()
+                        }
                     }
                     Log.i(TAG, "Saved audio: $filename (${bytes.size} bytes)")
                 } catch (e: Exception) {
                     Log.e(TAG, "saveAudioFile failed", e)
                     runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                        if (!isDestroyed) {
+                            Toast.makeText(applicationContext, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             }.start()

@@ -1,7 +1,7 @@
 <script>
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { playlistStore } from '$lib/stores/playlist';
-	import { Play, Pause, Square, Volume2, Gauge, AlertTriangle, Download, ListMusic, X, GripVertical, ChevronDown, AudioLines, SkipBack, SkipForward } from 'lucide-svelte';
+	import { Play, Pause, Square, Volume2, Gauge, Download, ListMusic, X, GripVertical, ChevronDown, AudioLines, SkipBack, SkipForward } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
 	let playerState = $state(PlayState.IDLE);
@@ -12,7 +12,6 @@
 	let playbackRate = $state(1.0);
 	let errorMessage = $state('');
 	let showSpeedMenu = $state(false);
-	let showStopConfirm = $state(false);
 	let showQueue = $state(false);
 	// Props: expanded state managed by parent for back-button/history integration
 	let { expanded = $bindable(false), onopen = () => {}, onclose = () => {} } = $props();
@@ -36,8 +35,13 @@
 		e.preventDefault();
 		dragIndex = idx;
 		dragOverIndex = idx;
-		const target = e.currentTarget.closest('[data-queue-item]');
-		if (target) target.setPointerCapture(e.pointerId);
+		// Attach move/end handlers directly to the grip element and capture pointer
+		// on it — pointer capture redirects events to the captured element, so
+		// handlers on ancestor containers won't receive them.
+		const grip = e.currentTarget;
+		grip.setPointerCapture(e.pointerId);
+		grip.onpointermove = handleDragMove;
+		grip.onpointerup = (ev) => { handleDragEnd(ev); grip.onpointermove = null; grip.onpointerup = null; };
 	}
 
 	function handleDragMove(e) {
@@ -94,6 +98,24 @@
 		playlistStore.currentIndex.subscribe((i) => (queueCurrentIndex = i)),
 	];
 	onDestroy(() => unsubs.forEach((u) => u()));
+
+	// Register touchmove with { passive: false } so e.preventDefault() works
+	let expandedViewEl = $state(null);
+	$effect(() => {
+		const el = expandedViewEl;
+		if (!el) return;
+		el.addEventListener('touchmove', handleExpandedTouchMove, { passive: false });
+		return () => el.removeEventListener('touchmove', handleExpandedTouchMove);
+	});
+
+	// Same for queue panel swipe
+	let queuePanelEl = $state(null);
+	$effect(() => {
+		const el = queuePanelEl;
+		if (!el) return;
+		el.addEventListener('touchmove', handleQueueTouchMove, { passive: false });
+		return () => el.removeEventListener('touchmove', handleQueueTouchMove);
+	});
 
 	const playbackRates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
@@ -236,6 +258,8 @@
 		// Don't open if tapping a button or interactive element
 		if (e.target.closest('button') || e.target.closest('[data-no-expand]')) return;
 		if (isError) return;
+		showQueue = false; // close queue panel before expanding
+		hasAnimatedIn = false; // allow entry animation
 		expanded = true;
 		onopen();
 	}
@@ -248,8 +272,72 @@
 	let dragOffsetY = $state(0); // live translateY offset for expanded view
 	let isDraggingExpanded = $state(false); // true while finger is actively dragging
 	let isSnapping = $state(false); // true during snap-back/close animation
-	const SWIPE_THRESHOLD = 60;
-	const VELOCITY_THRESHOLD = 0.4; // px/ms — fast flick bypasses position threshold
+	const COMPACT_SWIPE_THRESHOLD = 50; // compact bar swipe-up to expand
+	const QUEUE_SWIPE_THRESHOLD = 80; // queue panel dismiss threshold
+	const VELOCITY_THRESHOLD = 0.5; // px/ms — fast flick bypasses position threshold
+	let hasAnimatedIn = $state(false); // prevents re-triggering slide-up after snap-back
+
+	// ── Queue panel swipe-to-dismiss ──────────
+	let queueDragY = $state(0);
+	let isQueueDragging = $state(false);
+	let isQueueSnapping = $state(false);
+	let queueTouchStartY = 0;
+	let queueTouchStartTime = 0;
+
+	function handleQueueTouchStart(e) {
+		// Only drag from the handle area or header, not the scrollable list or drag handles
+		if (e.target.closest('.queue-scroll-area')) return;
+		if (e.target.closest('button')) return;
+		if (e.target.closest('[data-queue-item]')) return; // don't conflict with drag-reorder
+		queueTouchStartY = e.touches[0].clientY;
+		queueTouchStartTime = Date.now();
+		isQueueDragging = true;
+		isQueueSnapping = false;
+		queueDragY = 0;
+	}
+
+	function handleQueueTouchMove(e) {
+		if (!isQueueDragging) return;
+		const dy = e.touches[0].clientY - queueTouchStartY;
+		// Only track downward drags (positive dy = dragging down to close)
+		if (dy > 0) {
+			queueDragY = dy < 100 ? dy : 100 + (dy - 100) * 0.4;
+			e.preventDefault();
+		} else {
+			queueDragY = 0;
+		}
+	}
+
+	function handleQueueTouchEnd(e) {
+		if (!isQueueDragging) return;
+		isQueueDragging = false;
+
+		// If no meaningful downward drag happened, just reset without any animation
+		if (queueDragY < 5) {
+			queueDragY = 0;
+			return;
+		}
+
+		const dy = e.changedTouches[0].clientY - queueTouchStartY;
+		const elapsed = Date.now() - queueTouchStartTime;
+		const velocity = elapsed > 0 ? dy / elapsed : 0;
+
+		if (queueDragY > QUEUE_SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD) {
+			// Animate out then close
+			isQueueSnapping = true;
+			queueDragY = 500;
+			setTimeout(() => {
+				showQueue = false;
+				queueDragY = 0;
+				isQueueSnapping = false;
+			}, 200);
+		} else {
+			// Snap back smoothly
+			isQueueSnapping = true;
+			queueDragY = 0;
+			setTimeout(() => { isQueueSnapping = false; }, 200);
+		}
+	}
 
 	// Compact bar: swipe up to open (threshold-based is fine for opening)
 	function handleCompactTouchStart(e) {
@@ -260,7 +348,9 @@
 	function handleCompactTouchEnd(e) {
 		const dy = touchStartY - e.changedTouches[0].clientY;
 		const dx = Math.abs(touchStartX - e.changedTouches[0].clientX);
-		if (dy > SWIPE_THRESHOLD && dy > dx && !isError) {
+		if (dy > COMPACT_SWIPE_THRESHOLD && dy > dx && !isError) {
+			showQueue = false;
+			hasAnimatedIn = false; // allow entry animation
 			expanded = true;
 			onopen();
 		}
@@ -268,6 +358,7 @@
 
 	// Expanded view: finger-tracked swipe down to close
 	function handleExpandedTouchStart(e) {
+		hasAnimatedIn = true; // entry animation is done, don't replay on snap-back
 		touchStartY = e.touches[0].clientY;
 		touchStartX = e.touches[0].clientX;
 		touchStartTime = Date.now();
@@ -277,8 +368,9 @@
 		const scrollable = e.target.closest('.queue-scroll-area');
 		if (scrollable && scrollable.scrollTop > 0) return;
 
-		// Don't start drag if touching interactive elements (seek bar, buttons, speed menu)
+		// Don't start drag if touching interactive elements (seek bar, buttons, speed menu, drag handles)
 		if (e.target.closest('[data-no-swipe]') || e.target.closest('button') || e.target.closest('select')) return;
+		if (e.target.closest('.touch-none') || e.target.closest('[data-queue-item]')) return;
 
 		isDraggingExpanded = true;
 		isSnapping = false;
@@ -286,7 +378,7 @@
 	}
 
 	function handleExpandedTouchMove(e) {
-		if (!isDraggingExpanded || touchWasSeeking || isSeeking) return;
+		if (!isDraggingExpanded || touchWasSeeking || isSeeking || dragIndex >= 0) return;
 
 		const dy = e.touches[0].clientY - touchStartY;
 		const dx = Math.abs(e.touches[0].clientX - touchStartX);
@@ -313,9 +405,10 @@
 		const dy = e.changedTouches[0].clientY - touchStartY;
 		const elapsed = Date.now() - touchStartTime;
 		const velocity = elapsed > 0 ? dy / elapsed : 0;
+		const screenThird = window.innerHeight / 3;
 
-		// Close if dragged past threshold OR flicked fast enough
-		if (dragOffsetY > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD) {
+		// Close if dragged past 1/3 of screen OR flicked fast enough (like Spotify/YT Music)
+		if (dy > screenThird || velocity > VELOCITY_THRESHOLD) {
 			// Animate out — set offset to full height and then close
 			isSnapping = true;
 			dragOffsetY = window.innerHeight;
@@ -340,20 +433,24 @@
 	<!-- Backdrop to dismiss queue on tap outside -->
 	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 	<div
-		class="fixed inset-0 z-28 bg-black/30"
+		class="fixed inset-0 z-[28] bg-black/30"
 		onclick={() => showQueue = false}
 	></div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-29 bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 rounded-t-2xl shadow-2xl queue-slide-up"
-		style="max-height: min(50vh, {queueItems.length * 72 + 56}px)"
+		bind:this={queuePanelEl}
+		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-[29] bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 rounded-t-2xl shadow-2xl queue-slide-up"
+		style="max-height: 60vh; transform: translateY({queueDragY}px); {isQueueSnapping ? 'transition: transform 0.2s ease-out;' : ''}"
+		ontouchstart={handleQueueTouchStart}
+		ontouchend={handleQueueTouchEnd}
 		onpointermove={handleDragMove}
 		onpointerup={handleDragEnd}
 		onpointercancel={handleDragEnd}
 	>
-		<!-- Swipe handle -->
-		<div class="flex justify-center pt-2 pb-0">
-			<div class="w-8 h-1 bg-white/20 rounded-full"></div>
+		<!-- Swipe handle — drag down to close, tap to close -->
+		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+		<div class="flex justify-center pt-3 pb-1 cursor-pointer" onclick={() => showQueue = false}>
+			<div class="w-10 h-1 bg-white/20 rounded-full"></div>
 		</div>
 		<div class="px-4 py-2 flex items-center justify-between border-b border-white/5">
 			<div class="flex items-center gap-2">
@@ -378,7 +475,7 @@
 				</button>
 			</div>
 		</div>
-		<div bind:this={queueListEl} class="overflow-y-auto custom-scrollbar" style="max-height: calc(min(50vh, {queueItems.length * 72 + 56}px) - 56px)">
+		<div bind:this={queueListEl} class="overflow-y-auto custom-scrollbar queue-scroll-area" style="max-height: calc(60vh - 64px)">
 			{#each queueItems as item, idx (item.id)}
 				{@const isDragging = dragIndex === idx}
 				{@const isDropTarget = dragIndex >= 0 && dragOverIndex === idx && dragIndex !== idx}
@@ -549,16 +646,6 @@
 					</button>
 				{/if}
 
-				<!-- Stop (only when NOT generating) -->
-				{#if !isGenerating}
-					<button
-						onclick={() => showStopConfirm = true}
-						class="p-2 text-slate-500 hover:text-white transition-colors"
-						title="Stop and discard"
-					>
-						<Square size={14} />
-					</button>
-				{/if}
 			</div>
 		{/if}
 	</div>
@@ -568,10 +655,10 @@
 {#if expanded && isVisible && !isError}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed inset-0 z-50 bg-[#0a0c10] flex flex-col {dragOffsetY === 0 && !isDraggingExpanded ? 'expand-slide-up' : ''} pb-[72px] md:pb-0"
-		style="transform: translateY({dragOffsetY}px); {isSnapping ? 'transition: transform 0.25s ease-out;' : ''} touch-action: pan-x;"
+		class="fixed inset-0 z-50 bg-[#0a0c10] flex flex-col {!hasAnimatedIn ? 'expand-slide-up' : ''} pb-[72px] md:pb-0"
+		bind:this={expandedViewEl}
+		style="transform: translateY({dragOffsetY}px); {isSnapping ? 'transition: transform 0.25s ease-out;' : ''}"
 		ontouchstart={handleExpandedTouchStart}
-		ontouchmove={handleExpandedTouchMove}
 		ontouchend={handleExpandedTouchEnd}
 	>
 		<!-- Swipe handle indicator -->
@@ -601,8 +688,14 @@
 		</div>
 
 		{#if showExpandedQueue}
-			<!-- Queue list in expanded view -->
-			<div class="flex-1 overflow-y-auto px-4 custom-scrollbar queue-scroll-area">
+			<!-- Queue list in expanded view (with drag-to-reorder) -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="flex-1 overflow-y-auto px-4 custom-scrollbar queue-scroll-area"
+				onpointermove={handleDragMove}
+				onpointerup={handleDragEnd}
+				onpointercancel={handleDragEnd}
+			>
 				{#if queueItems.length === 0}
 					<div class="flex flex-col items-center justify-center h-full text-slate-600">
 						<ListMusic size={40} class="mb-3 opacity-50" />
@@ -620,28 +713,51 @@
 						</button>
 					</div>
 					{#each queueItems as item, idx (item.id)}
-						<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+						{@const isDragging = dragIndex === idx}
+						{@const isDropTarget = dragIndex >= 0 && dragOverIndex === idx && dragIndex !== idx}
 						<div
-							onclick={() => playQueueItem(idx)}
-							class="flex items-center gap-3 w-full px-3 py-3 transition-colors cursor-pointer rounded-lg
-								{idx === queueCurrentIndex ? 'bg-blue-500/10' : 'hover:bg-white/5'}"
+							data-queue-item={idx}
+							class="flex items-center gap-2 w-full px-2 py-3 transition-colors rounded-lg select-none
+								{idx === queueCurrentIndex ? 'bg-blue-500/10' : 'hover:bg-white/5'}
+								{isDragging ? 'opacity-50 bg-white/5' : ''}
+								{isDropTarget ? 'border-t-2 !border-t-blue-400' : ''}"
 						>
-							<div class="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg {idx === queueCurrentIndex ? 'bg-blue-500/20' : 'bg-white/5'}">
+							<!-- Drag Handle -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="w-10 h-10 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 touch-none"
+								onpointerdown={(e) => handleDragStart(idx, e)}
+							>
+								<GripVertical size={16} />
+							</div>
+
+							<!-- Track number -->
+							<button
+								onclick={() => playQueueItem(idx)}
+								class="w-8 h-8 flex items-center justify-center shrink-0 rounded-lg hover:bg-white/10 transition-colors"
+							>
 								{#if idx === queueCurrentIndex && (isPlaying || isGenerating)}
 									<div class="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
 								{:else}
 									<span class="text-xs font-mono {idx === queueCurrentIndex ? 'text-blue-400' : 'text-slate-500'}">{idx + 1}</span>
 								{/if}
-							</div>
-							<div class="flex-1 min-w-0">
+							</button>
+
+							<!-- Track info -->
+							<button
+								onclick={() => playQueueItem(idx)}
+								class="flex-1 min-w-0 text-left"
+							>
 								<p class="text-sm truncate {idx === queueCurrentIndex ? 'text-blue-300' : 'text-slate-300'}">{item.preview || item.text?.slice(0, 60)}</p>
 								<span class="text-[11px] text-slate-600">
 									{voiceDisplayNames[item.voice] || item.voice} · {item.speed?.toFixed(1) || '1.0'}x
 								</span>
-							</div>
+							</button>
+
+							<!-- Remove -->
 							<button
-								onclick={(e) => { e.stopPropagation(); playlistStore.remove(idx); }}
-								class="w-8 h-8 flex items-center justify-center shrink-0 text-slate-700 hover:text-red-400 active:text-red-400 transition-colors rounded-lg"
+								onclick={() => playlistStore.remove(idx)}
+								class="w-10 h-10 flex items-center justify-center shrink-0 text-slate-700 hover:text-red-400 active:text-red-400 transition-colors rounded-lg"
 							>
 								<X size={14} />
 							</button>
@@ -747,7 +863,7 @@
 				<!-- Play/Pause (large) -->
 				{#if isGenerating}
 					<div class="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center">
-						<div class="w-7 h-7 border-3 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+						<div class="w-7 h-7 border-[3px] border-blue-400 border-t-transparent rounded-full animate-spin"></div>
 					</div>
 				{:else}
 					<button
@@ -773,7 +889,7 @@
 			</div>
 
 			<!-- Bottom actions row -->
-			<div class="flex items-center justify-between px-4">
+			<div class="flex items-center {isGenerating ? 'justify-center' : 'justify-between'} px-4">
 				<!-- Speed control -->
 				<div class="relative" style="touch-action: manipulation">
 					<button
@@ -810,49 +926,6 @@
 					</button>
 				{/if}
 
-				<!-- Stop / Discard -->
-				{#if !isGenerating}
-					<button
-						onclick={() => showStopConfirm = true}
-						class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-400 bg-white/5 hover:bg-white/10 px-3 py-2 rounded-full transition-colors"
-					>
-						<Square size={14} />
-						Stop
-					</button>
-				{/if}
-			</div>
-		</div>
-	</div>
-{/if}
-
-<!-- Stop Confirmation Modal -->
-{#if showStopConfirm}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onclick={() => showStopConfirm = false}>
-		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
-			<div class="flex items-center gap-3 mb-4">
-				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
-					<AlertTriangle size={20} class="text-red-400" />
-				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Stop Playback?</h3>
-			</div>
-			<p class="text-sm text-slate-400 mb-6">
-				This will stop the current audio. You can replay it from History anytime.
-			</p>
-			<div class="flex gap-3">
-				<button
-					onclick={() => showStopConfirm = false}
-					class="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-medium transition-colors"
-				>
-					Keep Playing
-				</button>
-				<button
-					onclick={() => { playerStore.stop(); playlistStore.clear(); showStopConfirm = false; showQueue = false; }}
-					class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium transition-colors"
-				>
-					Stop
-				</button>
 			</div>
 		</div>
 	</div>

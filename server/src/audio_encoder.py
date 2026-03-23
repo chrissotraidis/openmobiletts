@@ -92,7 +92,7 @@ class AudioEncoder:
         # padding. Over many segments, the cumulative timing metadata diverges
         # from the browser's actual playback position. CBR byte-based duration
         # reflects what the browser will actually decode and play.
-        bitrate_bps = int(self.bitrate.replace('k', '000'))
+        bitrate_bps = int(self.bitrate.lower().replace('k', '000'))
         duration = (len(mp3_bytes) * 8) / bitrate_bps
 
         return mp3_bytes, duration

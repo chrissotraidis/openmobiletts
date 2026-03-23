@@ -695,7 +695,11 @@ class TtsHttpServer(
                     // and continue writing to disk only. The client detects the
                     // incomplete stream and recovers via the job endpoint.
                     if (streamAlive && !stream.cancelled) {
-                        val offered = stream.tryEnqueue("TIMING:$timing\n".toByteArray(Charsets.UTF_8))
+                        // Use timing.toString() with newline escaping — JSONObject.toString()
+                        // does not escape embedded newlines in string values, which would
+                        // break the client's line-based TIMING: protocol parser.
+                        val timingStr = timing.toString().replace("\n", "\\n").replace("\r", "\\r")
+                        val offered = stream.tryEnqueue("TIMING:$timingStr\n".toByteArray(Charsets.UTF_8))
                                 && stream.tryEnqueue("AUDIO:${audioBytes.size}\n".toByteArray(Charsets.UTF_8))
                                 && stream.tryEnqueue(audioBytes)
                         if (!offered) {
@@ -989,8 +993,8 @@ private class QueueInputStream : InputStream() {
 
     /** Signal that no more data will be produced. */
     fun finish() {
-        finished = true
-        // Try to enqueue sentinel, but don't block forever if the reader is dead.
+        // Enqueue sentinel BEFORE setting finished flag to prevent the reader
+        // from seeing finished=true while the sentinel is not yet in the queue.
         // 30 retries × 500ms = 15 seconds max wait, then force cancel.
         var retries = 0
         while (!queue.offer(SENTINEL, 500, TimeUnit.MILLISECONDS)) {
@@ -1001,6 +1005,7 @@ private class QueueInputStream : InputStream() {
                 return
             }
         }
+        finished = true
     }
 
     /** Signal an error — reader will throw IOException. */
