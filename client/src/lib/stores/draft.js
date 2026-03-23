@@ -16,22 +16,29 @@ function loadDraft() {
 }
 
 function createDraftStore() {
-	const { subscribe, set, update } = writable(loadDraft());
+	const initial = loadDraft();
+	const { subscribe, set, update } = writable(initial);
 
-	let currentValue = loadDraft();
+	let currentValue = initial;
+	let saveTimer = null;
 
-	// Keep currentValue in sync
+	// Keep currentValue in sync; debounce localStorage writes to avoid
+	// blocking the main thread during large pastes on mobile WebViews
 	subscribe((v) => {
 		currentValue = v;
-		try {
-			if (v) {
-				localStorage.setItem(STORAGE_KEY, v);
-			} else {
-				localStorage.removeItem(STORAGE_KEY);
+		if (typeof localStorage === 'undefined') return;
+		if (saveTimer) clearTimeout(saveTimer);
+		saveTimer = setTimeout(() => {
+			try {
+				if (currentValue) {
+					localStorage.setItem(STORAGE_KEY, currentValue);
+				} else {
+					localStorage.removeItem(STORAGE_KEY);
+				}
+			} catch {
+				// ignore — localStorage full or unavailable
 			}
-		} catch {
-			// ignore
-		}
+		}, 300);
 	});
 
 	return {
@@ -56,9 +63,11 @@ function createDraftStore() {
 			return id;
 		},
 
-		/** Clear the draft */
+		/** Clear the draft (flushes immediately to localStorage) */
 		clear() {
+			if (saveTimer) clearTimeout(saveTimer);
 			set('');
+			try { localStorage.removeItem(STORAGE_KEY); } catch {}
 		},
 	};
 }

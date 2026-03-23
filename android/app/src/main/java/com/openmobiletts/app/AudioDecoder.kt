@@ -296,6 +296,9 @@ object AudioDecoder {
         if (dataOffset == 0 || dataSize == 0) {
             throw IllegalArgumentException("Invalid WAV file — no data chunk found")
         }
+        if (bitsPerSample != 16) {
+            throw IllegalArgumentException("Unsupported WAV format: ${bitsPerSample}-bit samples (only 16-bit PCM supported)")
+        }
 
         AppLog.i(TAG, "WAV: ${sampleRate}Hz, ${channels}ch, ${bitsPerSample}bit, ${dataSize} bytes PCM")
 

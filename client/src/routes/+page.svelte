@@ -157,6 +157,7 @@
 			// Set initial state so back button has somewhere to return to
 			history.replaceState({ tab: 'generate' }, '');
 			window.addEventListener('popstate', handlePopState);
+			return () => window.removeEventListener('popstate', handlePopState);
 		}
 	});
 

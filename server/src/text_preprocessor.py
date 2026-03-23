@@ -145,7 +145,12 @@ class TextPreprocessor:
             return before + ' ' + after
 
         # Match: char + single newline (not preceded/followed by newline) + char
-        text = re.sub(r'([^\n])\n(?!\n)([^\n])', handle_single_newline, text)
+        # Run iteratively because the regex consumes boundary chars, causing
+        # alternating newlines to be skipped in sequences like "A\nB\nC"
+        prev = None
+        while prev != text:
+            prev = text
+            text = re.sub(r'([^\n])\n(?!\n)([^\n])', handle_single_newline, text)
 
         # Clean up spaces around paragraph breaks
         text = re.sub(r' *\n\n *', '\n\n', text)

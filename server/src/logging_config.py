@@ -126,11 +126,10 @@ def read_logs(max_lines: int = 500, level: str = None) -> List[dict]:
             with open(log_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
 
-            # Process lines in reverse (newest first)
-            for line in reversed(lines):
-                if len(entries) >= max_lines:
-                    break
-
+            # Process lines forward so multiline continuations attach to the
+            # correct entry, then reverse per-file results for newest-first order.
+            file_entries = []
+            for line in lines:
                 line = line.strip()
                 if not line:
                     continue
@@ -148,12 +147,17 @@ def read_logs(max_lines: int = 500, level: str = None) -> List[dict]:
                     if level and entry['level'] != level.upper():
                         continue
 
-                    entries.append(entry)
+                    file_entries.append(entry)
                 else:
-                    # Non-matching line (might be multiline continuation)
-                    # Append to previous entry's message if exists
-                    if entries and line:
-                        entries[-1]['message'] += '\n' + line
+                    # Non-matching line (multiline continuation like stack traces)
+                    # Append to the most recent entry's message
+                    if file_entries and line:
+                        file_entries[-1]['message'] += '\n' + line
+
+            # Reverse so newest entries come first, then append to results
+            file_entries.reverse()
+            remaining = max_lines - len(entries)
+            entries.extend(file_entries[:remaining])
 
         except (IOError, OSError):
             continue

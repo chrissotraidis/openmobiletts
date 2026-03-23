@@ -374,6 +374,7 @@ function createPlayerStore() {
 				document.addEventListener('visibilitychange', visibilityHandler);
 			}
 
+			let reader = null;
 			try {
 				resetInactivityTimer();
 
@@ -392,7 +393,7 @@ function createPlayerStore() {
 					throw new Error(err.detail || 'TTS generation failed');
 				}
 
-				const reader = response.body.getReader();
+				reader = response.body.getReader();
 				let buffer = new Uint8Array(0);
 				let bufferOffset = 0; // Read position within buffer
 				let pendingAudioBytes = 0;
@@ -532,9 +533,14 @@ function createPlayerStore() {
 				notifyGenerationComplete();
 
 				if (autoPlay) {
-					audioElement.play();
-					state.set(PlayState.PLAYING);
-					window.Android?.onPlaybackStarted();
+					try {
+						await audioElement.play();
+						state.set(PlayState.PLAYING);
+						window.Android?.onPlaybackStarted();
+					} catch {
+						state.set(PlayState.PAUSED);
+						window.Android?.onPlaybackPaused();
+					}
 				} else {
 					state.set(PlayState.PAUSED);
 					window.Android?.onPlaybackPaused();
@@ -548,6 +554,9 @@ function createPlayerStore() {
 				}
 				currentHistoryId.set(null);
 			} catch (err) {
+				// Cancel the reader to release the response body and stop server-side writes
+				try { reader?.cancel(); } catch {}
+
 				// Clean up any audio resources allocated before the error
 				if (audioElement) {
 					audioElement.pause();
@@ -616,9 +625,14 @@ function createPlayerStore() {
 							notifyGenerationComplete();
 
 							if (autoPlay) {
-								audioElement.play();
-								state.set(PlayState.PLAYING);
-								window.Android?.onPlaybackStarted();
+								try {
+									await audioElement.play();
+									state.set(PlayState.PLAYING);
+									window.Android?.onPlaybackStarted();
+								} catch {
+									state.set(PlayState.PAUSED);
+									window.Android?.onPlaybackPaused();
+								}
 							} else {
 								state.set(PlayState.PAUSED);
 								window.Android?.onPlaybackPaused();
@@ -722,9 +736,14 @@ function createPlayerStore() {
 					stopGenerationTimer();
 
 					if (autoPlay) {
-						audioElement.play();
-						state.set(PlayState.PLAYING);
-						window.Android?.onPlaybackStarted();
+						try {
+							await audioElement.play();
+							state.set(PlayState.PLAYING);
+							window.Android?.onPlaybackStarted();
+						} catch {
+							state.set(PlayState.PAUSED);
+							window.Android?.onPlaybackPaused();
+						}
 					} else {
 						state.set(PlayState.PAUSED);
 						window.Android?.onPlaybackPaused();
@@ -744,14 +763,21 @@ function createPlayerStore() {
 		},
 
 		play() {
-			if (audioElement) {
+			const el = audioElement;
+			if (el) {
 				// If audio ended (at the end), restart from beginning
-				if (audioElement.ended) {
-					audioElement.currentTime = 0;
+				if (el.ended) {
+					el.currentTime = 0;
 				}
-				audioElement.play();
-				state.set(PlayState.PLAYING);
-				window.Android?.onPlaybackStarted();
+				el.play().then(() => {
+					if (audioElement !== el) return; // element was replaced by stop/generate
+					state.set(PlayState.PLAYING);
+					window.Android?.onPlaybackStarted();
+				}).catch(() => {
+					if (audioElement !== el) return;
+					state.set(PlayState.PAUSED);
+					window.Android?.onPlaybackPaused();
+				});
 			}
 		},
 
@@ -831,7 +857,7 @@ function createPlayerStore() {
 				document.body.appendChild(a);
 				a.click();
 				document.body.removeChild(a);
-				URL.revokeObjectURL(url);
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
 			}
 		},
 	};

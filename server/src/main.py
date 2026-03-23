@@ -111,7 +111,11 @@ async def switch_engine(request: EngineSwitchRequest):
             detail=f"Engine '{request.engine}' is not available. Valid: {sorted(valid_names)}",
         )
     logger.info(f"Switching TTS engine: {engine_manager.active_name} → {request.engine}")
-    engine_manager.switch(request.engine)
+    try:
+        engine_manager.switch(request.engine)
+    except (ImportError, FileNotFoundError, RuntimeError) as e:
+        logger.error(f"Failed to switch engine to '{request.engine}': {e}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return {
         "engine": engine_manager.active_name,
         "voices": len(engine_manager.active.available_voices),
@@ -152,9 +156,23 @@ async def stream_tts(request: TTSRequest):
             detail="Text cannot be empty",
         )
 
+    # Validate voice is available on the active engine
+    valid_voices = {v['name'] for v in engine_manager.active.available_voices}
+    if voice not in valid_voices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Voice '{voice}' is not available. Valid voices: {sorted(valid_voices)}",
+        )
+
     # Preprocess and chunk text
     text_chunks = text_preprocessor.process(text)
     logger.info(f"Text preprocessed into {len(text_chunks)} chunks")
+
+    if not text_chunks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text produced no speakable content after preprocessing",
+        )
 
     async def generate_stream():
         """Generator that yields timing metadata and audio chunks."""
@@ -364,8 +382,16 @@ async def stt_transcribe(audio: UploadFile = File(...)):
     file_path = Path(settings.UPLOAD_DIR) / safe_name
 
     try:
+        max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        file_size = 0
         with open(file_path, "wb") as f:
             while chunk := await audio.read(8192):
+                file_size += len(chunk)
+                if file_size > max_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Audio file too large. Maximum: {settings.MAX_UPLOAD_SIZE_MB}MB",
+                    )
                 f.write(chunk)
 
         # Lazy init STT engine
