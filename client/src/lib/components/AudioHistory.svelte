@@ -32,8 +32,8 @@
 		playerStore.state.subscribe((s) => {
 			const prev = playerState;
 			playerState = s;
-			// Clear loading state when playback starts or errors
-			if (s === PlayState.PLAYING || s === PlayState.PAUSED || s === PlayState.ERROR) {
+			// Clear loading state when playback starts, errors, or returns to idle (e.g. user aborts)
+			if (s === PlayState.PLAYING || s === PlayState.PAUSED || s === PlayState.ERROR || s === PlayState.IDLE) {
 				loadingEntryId = null;
 			}
 			// Refresh cache status when generation completes (new audio may have been cached)
@@ -150,9 +150,10 @@
 	function handleDelete() {
 		if (pendingDeleteEntry) {
 			historyStore.remove(pendingDeleteEntry.id);
-			// If we were viewing this entry, go back to the list
+			// If we were viewing this entry, pop the pushState entry and go back to the list
 			if (viewingEntry && viewingEntry.id === pendingDeleteEntry.id) {
-				viewingEntry = null;
+				viewingEntry = null; // Clear immediately — don't depend on popstate firing
+				window.history.back();
 			}
 		}
 		showDeleteModal = false;
@@ -465,7 +466,7 @@
 		</div>
 
 		<!-- Text Display with synchronized highlighting and click-to-seek -->
-		<TextDisplay />
+		<TextDisplay generateOnly={false} />
 
 		<!-- Plain text fallback — shown when TextDisplay has no segments to render -->
 		{#if !((playerState === PlayState.GENERATING || playerState === PlayState.PLAYING || playerState === PlayState.PAUSED) && playerSegments.length > 0)}

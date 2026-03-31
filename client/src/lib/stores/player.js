@@ -31,6 +31,7 @@ function createPlayerStore() {
 	const inputText = writable('');
 	const totalChunks = writable(0); // Server-reported chunk count for accurate progress
 	const currentHistoryId = writable(null); // History entry ID currently being generated
+	const playbackSource = writable('generate'); // 'generate' or 'history' — controls TextDisplay visibility
 
 	// Generation timer (persistent across component mounts)
 	const generationStartTime = writable(null);
@@ -172,7 +173,7 @@ function createPlayerStore() {
 			return;
 		}
 		state.set(PlayState.PAUSED);
-		window.Android?.onPlaybackStopped();
+		window.Android?.onPlaybackPaused();
 	}
 
 	// Reference to the store object (set after creation) for use in handleEnded
@@ -309,6 +310,7 @@ function createPlayerStore() {
 		inputText,
 		totalChunks,
 		currentHistoryId,
+		playbackSource,
 		generationElapsed,
 
 		/**
@@ -690,6 +692,17 @@ function createPlayerStore() {
 		 * @param {boolean} autoPlay - Whether to auto-play
 		 */
 		async playFromHistory(entry, autoPlay = true) {
+			// Mark this playback as originating from history — TextDisplay
+			// on the Generate tab should not show history entry text.
+			playbackSource.set('history');
+
+			// Cancel any in-flight generation to avoid two coroutines racing
+			// to write shared audio state (audioElement, blobUrl, etc.)
+			if (activeController) {
+				activeController.abort();
+				activeController = null;
+			}
+
 			// Read from local IndexedDB cache — no timeout needed since this is
 			// a local read that either succeeds or fails (not a network request).
 			let cached = null;

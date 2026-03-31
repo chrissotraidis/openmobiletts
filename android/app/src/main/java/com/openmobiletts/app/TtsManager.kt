@@ -106,8 +106,14 @@ class TtsManager {
     }
 
     fun release() {
-        tts?.release()
-        tts = null
+        // Acquire the generate mutex to ensure no generation is in progress
+        // before releasing the native TTS object (use-after-free protection).
+        kotlinx.coroutines.runBlocking {
+            generateMutex.withLock {
+                tts?.release()
+                tts = null
+            }
+        }
         AppLog.i(TAG, "TTS engine released")
     }
 }

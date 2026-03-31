@@ -162,16 +162,21 @@ class ModelDownloader {
 
             Log.i(TAG, "Download complete, extracting...")
 
-            // Extract tar.bz2
+            // Extract to a staging directory first. If extraction is interrupted
+            // (process kill, OOM), the incomplete staging dir won't pass the
+            // marker-file check and the download will restart on next launch.
+            val stagingDir = File(destDir, "${modelName}_staging")
+            if (stagingDir.exists()) stagingDir.deleteRecursively()
+
             val canonicalDest = destDir.canonicalFile
             destDir.mkdirs()
             BZip2CompressorInputStream(BufferedInputStream(tempFile.inputStream())).use { bzIn ->
                 TarArchiveInputStream(bzIn).use { tarIn ->
                     var entry = tarIn.nextTarEntry
                     while (entry != null) {
-                        val outFile = File(destDir, entry.name).canonicalFile
+                        val outFile = File(stagingDir, entry.name).canonicalFile
                         // Guard against path traversal (Zip Slip)
-                        if (!outFile.path.startsWith(canonicalDest.path)) {
+                        if (!outFile.path.startsWith(stagingDir.canonicalFile.path)) {
                             Log.w(TAG, "Skipping tar entry outside target dir: ${entry.name}")
                             entry = tarIn.nextTarEntry
                             continue
@@ -189,7 +194,23 @@ class ModelDownloader {
                 }
             }
 
-            Log.i(TAG, "Model extracted to: ${File(destDir, modelName)}")
+            // Extraction complete — atomically move staging to final location.
+            // The tar archive contains a top-level directory (modelName), so
+            // the staging dir contains that subdirectory.
+            val extractedModelDir = File(stagingDir, modelName)
+            val finalModelDir = File(destDir, modelName)
+            if (finalModelDir.exists()) finalModelDir.deleteRecursively()
+            val source = if (extractedModelDir.exists()) extractedModelDir else stagingDir
+            if (!source.renameTo(finalModelDir)) {
+                // renameTo can fail across filesystems — fall back to copy + delete
+                Log.w(TAG, "renameTo failed, falling back to copy")
+                source.copyRecursively(finalModelDir, overwrite = true)
+                source.deleteRecursively()
+            }
+            // Clean up staging dir if rename left it (e.g., cross-filesystem move)
+            if (stagingDir.exists()) stagingDir.deleteRecursively()
+
+            Log.i(TAG, "Model extracted to: $finalModelDir")
         } finally {
             openedConnections.forEach { it.disconnect() }
             tempFile.delete()

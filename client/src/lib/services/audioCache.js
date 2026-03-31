@@ -21,9 +21,13 @@ async function initDB() {
 	dbPromise = new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-		request.onerror = () => { dbPromise = null; reject(request.error); };
+		request.onerror = () => { db = null; dbPromise = null; reject(request.error); };
 		request.onsuccess = () => {
 			db = request.result;
+			// Reset stale reference if the browser closes the connection
+			// (e.g., app backgrounded on Android, or version change from another tab)
+			db.onclose = () => { db = null; };
+			db.onversionchange = () => { db.close(); db = null; };
 			resolve(db);
 		};
 
@@ -194,19 +198,37 @@ async function cleanupCache() {
 			const store = transaction.objectStore(STORE_NAME);
 			const index = store.index('createdAt');
 
-			// Get all entries sorted by creation time
-			const request = index.getAll();
+			// Two-pass cleanup using cursors (no getAll — avoids loading blobs into memory).
+			// Pass 1: walk all entries to count and sum sizes.
+			// Pass 2: delete oldest entries until under both count and size limits.
+			const sizes = []; // [{id, size}] oldest-first
+			let totalSize = 0;
 
-			request.onsuccess = () => {
-				const entries = request.result;
-				let totalSize = entries.reduce((sum, e) => sum + (e.size || 0), 0);
-				let count = entries.length;
+			const scanReq = index.openCursor();
+			scanReq.onsuccess = () => {
+				const cursor = scanReq.result;
+				if (cursor) {
+					const entrySize = cursor.value.size || 0;
+					sizes.push({ id: cursor.value.id, size: entrySize });
+					totalSize += entrySize;
+					cursor.continue();
+					return;
+				}
 
-				// Remove oldest entries if over limits
-				for (let i = 0; i < entries.length && (count > MAX_ENTRIES || totalSize > MAX_SIZE_BYTES); i++) {
-					store.delete(entries[i].id);
-					totalSize -= (entries[i].size || 0);
-					count--;
+				// Scan complete — determine how many oldest entries to delete
+				let deleteCount = 0;
+				let freedBytes = 0;
+				for (let i = 0; i < sizes.length; i++) {
+					const overCount = (sizes.length - deleteCount) > MAX_ENTRIES;
+					const overSize = (totalSize - freedBytes) > MAX_SIZE_BYTES;
+					if (!overCount && !overSize) break;
+					freedBytes += sizes[i].size;
+					deleteCount++;
+				}
+
+				// Delete the oldest entries
+				for (let i = 0; i < deleteCount; i++) {
+					store.delete(sizes[i].id);
 				}
 			};
 

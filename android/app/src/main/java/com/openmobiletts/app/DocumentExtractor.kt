@@ -21,7 +21,7 @@ import javax.xml.parsers.SAXParserFactory
 object DocumentExtractor {
 
     private const val TAG = "DocumentExtractor"
-    private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt", "md")
+    private val SUPPORTED_EXTENSIONS = setOf("pdf", "doc", "docx", "txt", "md")
 
     fun init(context: Context) {
         PDFBoxResourceLoader.init(context)
@@ -43,6 +43,9 @@ object DocumentExtractor {
 
         return when (ext) {
             "pdf" -> extractPdf(file)
+            "doc" -> throw IllegalArgumentException(
+                "Legacy .doc format is not supported. Please convert to .docx (File → Save As → Word Document) and try again."
+            )
             "docx" -> extractDocx(file)
             "txt" -> extractTxt(file)
             "md" -> extractMarkdown(file)
@@ -88,22 +91,23 @@ object DocumentExtractor {
 
     private fun extractDocx(file: File): String {
         val xmlContent = file.inputStream().use { fis ->
-            val zis = ZipInputStream(fis)
-            var entry = zis.nextEntry
-            var found: ByteArray? = null
+            ZipInputStream(fis).use { zis ->
+                var entry = zis.nextEntry
+                var found: ByteArray? = null
 
-            while (entry != null) {
-                if (entry.name == "word/document.xml") {
-                    found = zis.readBytes()
-                    break
+                while (entry != null) {
+                    if (entry.name == "word/document.xml") {
+                        found = zis.readBytes()
+                        break
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
                 }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
 
-            found ?: throw IllegalArgumentException(
-                "Invalid DOCX file: missing word/document.xml"
-            )
+                found ?: throw IllegalArgumentException(
+                    "Invalid DOCX file: missing word/document.xml"
+                )
+            }
         }
 
         return parseDocumentXml(xmlContent.inputStream())

@@ -26,6 +26,7 @@
 	let dragIndex = $state(-1);
 	let dragOverIndex = $state(-1);
 	let queueListEl = $state(null);
+	let expandedQueueListEl = $state(null);
 
 	// Expanded view seek state
 	let isSeeking = $state(false);
@@ -45,8 +46,10 @@
 	}
 
 	function handleDragMove(e) {
-		if (dragIndex < 0 || !queueListEl) return;
-		const items = queueListEl.querySelectorAll('[data-queue-item]');
+		// Use whichever queue container is currently visible
+		const listEl = expandedQueueListEl || queueListEl;
+		if (dragIndex < 0 || !listEl) return;
+		const items = listEl.querySelectorAll('[data-queue-item]');
 		const y = e.clientY;
 		let closest = dragIndex;
 		for (let i = 0; i < items.length; i++) {
@@ -78,10 +81,15 @@
 	const unsubs = [
 		playerStore.state.subscribe((s) => {
 			playerState = s;
-			if (s === PlayState.IDLE && expanded) {
-				expanded = false;
-				showExpandedQueue = false;
-				onclose();
+			if (s === PlayState.IDLE) {
+				showQueue = false;
+				showSpeedMenu = false;
+				expandedSpeedMenu = false;
+				if (expanded) {
+					expanded = false;
+					showExpandedQueue = false;
+					onclose();
+				}
 			}
 		}),
 		playerStore.currentTime.subscribe((t) => (currentTime = t)),
@@ -283,6 +291,7 @@
 	let isQueueSnapping = $state(false);
 	let queueTouchStartY = 0;
 	let queueTouchStartTime = 0;
+	let queueWasSwiped = false; // Prevent synthetic click after a real swipe
 
 	function handleQueueTouchStart(e) {
 		// Only drag from the handle area or header, not the scrollable list or drag handles
@@ -293,13 +302,14 @@
 		queueTouchStartTime = Date.now();
 		isQueueDragging = true;
 		isQueueSnapping = false;
+		queueWasSwiped = false;
 		queueDragY = 0;
 	}
 
 	function handleQueueTouchMove(e) {
 		if (!isQueueDragging) return;
 		const dy = e.touches[0].clientY - queueTouchStartY;
-		// Only track downward drags (positive dy = dragging down to close)
+		// Downward drag → dismiss queue panel
 		if (dy > 0) {
 			queueDragY = dy < 100 ? dy : 100 + (dy - 100) * 0.4;
 			e.preventDefault();
@@ -308,9 +318,32 @@
 		}
 	}
 
+	function handleQueueTouchCancel() {
+		if (!isQueueDragging) return;
+		isQueueDragging = false;
+		isQueueSnapping = true;
+		queueDragY = 0;
+		setTimeout(() => { isQueueSnapping = false; }, 200);
+	}
+
 	function handleQueueTouchEnd(e) {
 		if (!isQueueDragging) return;
 		isQueueDragging = false;
+
+		const dy = e.changedTouches[0].clientY - queueTouchStartY;
+		const elapsed = Date.now() - queueTouchStartTime;
+		const velocity = elapsed > 0 ? dy / elapsed : 0;
+
+		// Upward swipe → expand into full-screen queue view
+		if (dy < -40 || velocity < -VELOCITY_THRESHOLD) {
+			queueWasSwiped = true;
+			showQueue = false;
+			queueDragY = 0;
+			expanded = true;
+			showExpandedQueue = true;
+			hasAnimatedIn = false;
+			return;
+		}
 
 		// If no meaningful downward drag happened, just reset without any animation
 		if (queueDragY < 5) {
@@ -318,12 +351,9 @@
 			return;
 		}
 
-		const dy = e.changedTouches[0].clientY - queueTouchStartY;
-		const elapsed = Date.now() - queueTouchStartTime;
-		const velocity = elapsed > 0 ? dy / elapsed : 0;
-
 		if (queueDragY > QUEUE_SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD) {
 			// Animate out then close
+			queueWasSwiped = true;
 			isQueueSnapping = true;
 			queueDragY = 500;
 			setTimeout(() => {
@@ -393,6 +423,14 @@
 		}
 	}
 
+	function handleExpandedTouchCancel() {
+		if (!isDraggingExpanded) return;
+		isDraggingExpanded = false;
+		isSnapping = true;
+		dragOffsetY = 0;
+		setTimeout(() => { isSnapping = false; }, 250);
+	}
+
 	function handleExpandedTouchEnd(e) {
 		if (!isDraggingExpanded) return;
 		isDraggingExpanded = false;
@@ -415,6 +453,7 @@
 			setTimeout(() => {
 				expanded = false;
 				showExpandedQueue = false;
+				expandedSpeedMenu = false;
 				dragOffsetY = 0;
 				isSnapping = false;
 				onclose();
@@ -439,17 +478,18 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		bind:this={queuePanelEl}
-		class="fixed bottom-[120px] md:bottom-[48px] left-0 md:left-64 right-0 z-[29] bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 rounded-t-2xl shadow-2xl queue-slide-up"
+		class="fixed bottom-[128px] md:bottom-[52px] left-0 md:left-64 right-0 z-[29] bg-[#0d1117]/98 backdrop-blur-md border-t border-white/5 rounded-t-2xl shadow-2xl queue-slide-up"
 		style="max-height: 60vh; transform: translateY({queueDragY}px); {isQueueSnapping ? 'transition: transform 0.2s ease-out;' : ''}"
 		ontouchstart={handleQueueTouchStart}
 		ontouchend={handleQueueTouchEnd}
+		ontouchcancel={handleQueueTouchCancel}
 		onpointermove={handleDragMove}
 		onpointerup={handleDragEnd}
 		onpointercancel={handleDragEnd}
 	>
-		<!-- Swipe handle — drag down to close, tap to close -->
+		<!-- Swipe handle — drag down to close, swipe up or tap to expand to full-screen queue -->
 		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="flex justify-center pt-3 pb-1 cursor-pointer" onclick={() => showQueue = false}>
+		<div class="flex justify-center pt-3 pb-1 cursor-pointer" onclick={() => { if (queueWasSwiped) return; showQueue = false; expanded = true; showExpandedQueue = true; hasAnimatedIn = false; }}>
 			<div class="w-10 h-1 bg-white/20 rounded-full"></div>
 		</div>
 		<div class="px-4 py-2 flex items-center justify-between border-b border-white/5">
@@ -490,6 +530,7 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="w-10 h-10 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 touch-none"
+						ontouchstart={(e) => e.preventDefault()}
 						onpointerdown={(e) => handleDragStart(idx, e)}
 					>
 						<GripVertical size={16} />
@@ -660,6 +701,7 @@
 		style="transform: translateY({dragOffsetY}px); {isSnapping ? 'transition: transform 0.25s ease-out;' : ''}"
 		ontouchstart={handleExpandedTouchStart}
 		ontouchend={handleExpandedTouchEnd}
+		ontouchcancel={handleExpandedTouchCancel}
 	>
 		<!-- Swipe handle indicator -->
 		<div class="flex justify-center pt-3 pb-1">
@@ -691,6 +733,7 @@
 			<!-- Queue list in expanded view (with drag-to-reorder) -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
+				bind:this={expandedQueueListEl}
 				class="flex-1 overflow-y-auto px-4 custom-scrollbar queue-scroll-area"
 				onpointermove={handleDragMove}
 				onpointerup={handleDragEnd}
@@ -726,6 +769,7 @@
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
 								class="w-10 h-10 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 touch-none"
+								ontouchstart={(e) => e.preventDefault()}
 								onpointerdown={(e) => handleDragStart(idx, e)}
 							>
 								<GripVertical size={16} />

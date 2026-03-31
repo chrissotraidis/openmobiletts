@@ -1,6 +1,6 @@
 {
-  "checked_at": "2026-03-16",
-  "commit": "b7aa0482ea6829a80cb768bb0a423534547fc28a",
+  "checked_at": "2026-03-28",
+  "commit": "2931b84cacc59cd85ad0c180cd514b303fbea2a7",
   "version": "0.2.0",
   "values": {
     "tts.token-limit": {
@@ -8,6 +8,7 @@
       "code_value": "510 (Kokoro model constraint)",
       "doc_file": "docs/tts/tts-overview.md",
       "code_file": "server/src/text_preprocessor.py",
+      "code_symbol": "Kokoro inference limit",
       "status": "aligned",
       "confidence": "high",
       "provenance": "code-derived"
@@ -16,97 +17,118 @@
       "doc_value": "175-250 tokens per chunk",
       "code_value": "MAX_CHUNK_TOKENS=250, target 175-250",
       "doc_file": "docs/tts/tts-overview.md",
-      "code_file": "server/src/text_preprocessor.py",
+      "code_file": "server/src/text_preprocessor.py, server/src/config.py:22",
+      "code_symbol": "MAX_CHUNK_TOKENS",
       "status": "aligned",
       "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.bitrate": {
+      "doc_value": "64kbps CBR",
+      "code_value": "MP3_BITRATE=64k",
+      "doc_file": "docs/tts/tts-overview.md",
+      "code_file": "server/src/config.py:32",
+      "code_symbol": "MP3_BITRATE",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.sample-rate": {
+      "doc_value": "22050Hz",
+      "code_value": "MP3_SAMPLE_RATE=22050",
+      "doc_file": "docs/tts/tts-overview.md",
+      "code_file": "server/src/config.py:33",
+      "code_symbol": "MP3_SAMPLE_RATE",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.channels": {
+      "doc_value": "mono",
+      "code_value": "MP3_CHANNELS=1",
+      "doc_file": "docs/tts/tts-overview.md",
+      "code_file": "server/src/config.py:34",
+      "code_symbol": "MP3_CHANNELS",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.voice-count": {
+      "doc_value": "11 built-in voices (American/British English)",
+      "code_value": "Desktop: 11 voices (tts_engine.py). Android: 53 voices across 9 languages (VoiceRegistry.kt)",
+      "doc_file": "docs/tts/tts-overview.md:5, CLAUDE.md",
+      "code_file": "server/src/tts_engine.py:45-52, android/.../VoiceRegistry.kt",
+      "code_symbol": "VOICE_MAP / VoiceRegistry",
+      "status": "drifted",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.model-size": {
+      "doc_value": "~95 MB (Kokoro INT8)",
+      "code_value": "~350 MB (kokoro-multi-lang-v1_0, all 53 voices)",
+      "doc_file": "docs/tts/tts-overview.md:20, docs/android-app/model-download-flow.md:16",
+      "code_file": "android/.../ModelDownloader.kt:17, server/setup_sherpa_models.py:5",
+      "code_symbol": "TTS_MODEL_NAME",
+      "status": "drifted",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "tts.model-version": {
+      "doc_value": "kokoro-multi-lang-v1_1",
+      "code_value": "kokoro-multi-lang-v1_0",
+      "doc_file": "docs/multi-language/multi-language-overview.md:14",
+      "code_file": "server/src/config.py:27, android/.../ModelDownloader.kt:27",
+      "code_symbol": "TTS_MODEL_NAME / SHERPA_MODEL_DIR",
+      "status": "drifted",
+      "confidence": "medium",
       "provenance": "code-derived"
     },
     "stt.sample-rate": {
       "doc_value": "16kHz",
       "code_value": "SAMPLE_RATE=16000 (both platforms)",
       "doc_file": "docs/stt/stt-overview.md",
-      "code_file": "android/app/.../SttManager.kt:26, server/src/stt_engine.py:30",
+      "code_file": "server/src/stt_engine.py:30, android/.../SttManager.kt:26",
+      "code_symbol": "SAMPLE_RATE",
       "status": "aligned",
       "confidence": "high",
       "provenance": "spec-stated"
     },
     "stt.model-name": {
       "doc_value": "Moonshine v2 Medium",
-      "code_value": "sherpa-onnx-moonshine-base-en-int8",
+      "code_value": "sherpa-onnx-moonshine-base-en-int8 (API reports as moonshine-v2-medium)",
       "doc_file": "docs/stt/stt-overview.md",
-      "code_file": "android/app/.../ModelDownloader.kt:32, server/src/stt_engine.py:30",
-      "status": "aligned",
-      "confidence": "high",
+      "code_file": "server/src/stt_engine.py:31, server/src/main.py:411",
+      "code_symbol": "MODEL_NAME",
+      "status": "drifted",
+      "confidence": "medium",
       "provenance": "user-stated"
     },
-    "stt.default-android": {
-      "doc_value": "Medium is default on Android",
-      "code_value": "STT_MODEL_NAME=sherpa-onnx-moonshine-base-en-int8",
+    "stt.decoding-method": {
+      "doc_value": "greedy_search (implied by batch approach)",
+      "code_value": "greedy_search",
       "doc_file": "docs/stt/stt-overview.md",
-      "code_file": "android/app/.../ModelDownloader.kt:32",
+      "code_file": "server/src/stt_engine.py:92, android/.../SttManager.kt:91",
+      "code_symbol": "decoding_method / decodingMethod",
       "status": "aligned",
       "confidence": "high",
-      "provenance": "user-stated"
+      "provenance": "code-derived"
     },
-    "stt.feature-status": {
-      "doc_value": "🔵 Not Started",
-      "code_value": "Backend implemented (SttManager, OfflineRecognizer, endpoints)",
-      "doc_file": "docs/status.md",
-      "code_file": "android/app/.../SttManager.kt",
-      "status": "aligned",
+    "document-import.max-upload": {
+      "doc_value": "10 MB",
+      "code_value": "100 MB",
+      "doc_file": "docs/document-import/document-import-overview.md, CLAUDE.md",
+      "code_file": "server/src/config.py:42",
+      "code_symbol": "MAX_UPLOAD_SIZE_MB",
+      "status": "drifted",
       "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "document-export.feature-status": {
-      "doc_value": "🔵 Not Started",
-      "code_value": "Backend + API implemented (ExportManager, endpoints, UI picker)",
-      "doc_file": "docs/status.md",
-      "code_file": "android/app/.../ExportManager.kt",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "audio-import.feature-status": {
-      "doc_value": "🔵 Not Started",
-      "code_value": "AudioDecoder + upload routing implemented",
-      "doc_file": "docs/status.md",
-      "code_file": "android/app/.../AudioDecoder.kt",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "project-storage.feature-status": {
-      "doc_value": "🔵 Not Started",
-      "code_value": "CRUD + cleanup + export implemented on both platforms",
-      "doc_file": "docs/status.md",
-      "code_file": "android/app/.../ProjectStorage.kt, server/src/project_storage.py",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "unified-input.feature-status": {
-      "doc_value": "🔵 Not Started",
-      "code_value": "Mic button, export picker, audio routing in TextInput.svelte",
-      "doc_file": "docs/status.md",
-      "code_file": "client/src/lib/components/TextInput.svelte",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "stt.model-manager-naming": {
-      "doc_value": "ModelDownloader.kt (extended in-place)",
-      "code_value": "ModelDownloader.kt extended in-place (no separate ModelManager.kt)",
-      "doc_file": "docs/stt/stt-overview.md, docs/android-app/android-app-overview.md",
-      "code_file": "android/app/.../ModelDownloader.kt",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
+      "provenance": "code-derived"
     },
     "document-export.pdf-android": {
       "doc_value": "android.graphics.pdf.PdfDocument",
       "code_value": "PdfDocument API used in ExportManager.kt",
       "doc_file": "docs/document-export/document-export-overview.md",
-      "code_file": "android/app/.../ExportManager.kt",
+      "code_file": "android/.../ExportManager.kt",
+      "code_symbol": "PdfDocument",
       "status": "aligned",
       "confidence": "high",
       "provenance": "decided"
@@ -116,33 +138,7 @@
       "code_value": "ReportLab used in export_manager.py",
       "doc_file": "docs/document-export/document-export-overview.md",
       "code_file": "server/src/export_manager.py",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "android-app.record-audio-permission": {
-      "doc_value": "RECORD_AUDIO in AndroidManifest.xml",
-      "code_value": "RECORD_AUDIO declared",
-      "doc_file": "docs/stt/dictation-flow.md",
-      "code_file": "android/app/src/main/AndroidManifest.xml",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "spec-stated"
-    },
-    "android-app.health-version": {
-      "doc_value": "v3.0.0",
-      "code_value": "3.0.0",
-      "doc_file": "docs/status.md",
-      "code_file": "android/app/.../TtsHttpServer.kt:95, server/src/main.py:538",
-      "status": "aligned",
-      "confidence": "high",
-      "provenance": "code-derived"
-    },
-    "project-storage.desktop-dir": {
-      "doc_value": "~/.openmobilevoice/projects/",
-      "code_value": "Path.home() / '.openmobilevoice' / 'projects'",
-      "doc_file": "docs/project-storage/project-storage-overview.md",
-      "code_file": "server/src/project_storage.py:21",
+      "code_symbol": "reportlab import",
       "status": "aligned",
       "confidence": "high",
       "provenance": "spec-stated"
@@ -151,8 +147,89 @@
       "doc_value": "16kHz mono",
       "code_value": "TARGET_SAMPLE_RATE=16000",
       "doc_file": "docs/audio-import/audio-import-overview.md",
-      "code_file": "android/app/.../AudioDecoder.kt:19",
+      "code_file": "android/.../AudioDecoder.kt:19",
+      "code_symbol": "TARGET_SAMPLE_RATE",
       "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "audio-import.formats": {
+      "doc_value": "mp3, aac, ogg, wav",
+      "code_value": "mp3, aac, ogg, wav, m4a, webm",
+      "doc_file": "docs/audio-import/audio-import-overview.md:13",
+      "code_file": "android/.../AudioDecoder.kt",
+      "code_symbol": "supported MIME types",
+      "status": "gap",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "project-storage.desktop-dir": {
+      "doc_value": "~/.openmobilevoice/projects/",
+      "code_value": "Path.home() / '.openmobilevoice' / 'projects'",
+      "doc_file": "docs/project-storage/project-storage-overview.md",
+      "code_file": "server/src/project_storage.py:21",
+      "code_symbol": "DEFAULT_PROJECTS_DIR",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "android-app.job-ttl": {
+      "doc_value": "2-hour TTL",
+      "code_value": "JOB_TTL_MS = 2 * 60 * 60 * 1000",
+      "doc_file": "docs/android-app/android-app-overview.md",
+      "code_file": "android/.../TtsHttpServer.kt:32",
+      "code_symbol": "JOB_TTL_MS",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "android-app.poll-interval": {
+      "doc_value": "5 seconds",
+      "code_value": "2000 ms (2 seconds)",
+      "doc_file": "docs/android-app/android-app-overview.md",
+      "code_file": "client/src/lib/stores/player.js:217",
+      "code_symbol": "POLL_INTERVAL",
+      "status": "drifted",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "android-app.permissions": {
+      "doc_value": "RECORD_AUDIO required",
+      "code_value": "INTERNET, FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK, POST_NOTIFICATIONS, WAKE_LOCK, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS",
+      "doc_file": "docs/stt/dictation-flow.md",
+      "code_file": "android/app/src/main/AndroidManifest.xml",
+      "code_symbol": "uses-permission",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "spec-stated"
+    },
+    "android-app.nanohttp-port": {
+      "doc_value": "127.0.0.1:8080",
+      "code_value": "PORT=8080",
+      "doc_file": "docs/android-app/android-app-overview.md",
+      "code_file": "android/.../TtsHttpServer.kt:31",
+      "code_symbol": "PORT",
+      "status": "aligned",
+      "confidence": "high",
+      "provenance": "code-derived"
+    },
+    "server.version": {
+      "doc_value": "v2.0.0 (production), v3.0.0 (next)",
+      "code_value": "FastAPI version=2.0.0, health=3.0.0, capabilities=2.0.0",
+      "doc_file": "docs/status.md:4-5",
+      "code_file": "server/src/main.py:33,564,611",
+      "code_symbol": "version",
+      "status": "drifted",
+      "confidence": "medium",
+      "provenance": "code-derived"
+    },
+    "overview.current-status": {
+      "doc_value": "v3.0 features not yet started",
+      "code_value": "Phases 1-4 complete, 5 features In Progress",
+      "doc_file": "docs/overview.md:30,36",
+      "code_file": "docs/status.md (authoritative)",
+      "code_symbol": "N/A",
+      "status": "drifted",
       "confidence": "high",
       "provenance": "spec-stated"
     }

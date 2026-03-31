@@ -122,17 +122,21 @@
 
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
+		uploadError = '';
 
+		const selectedSpeed = $settingsStore.defaultSpeed || 1.0;
 		const historyId = historyStore.add({
 			text: text.trim(),
 			voice: $settingsStore.defaultVoice,
-			speed: 1.0,
+			speed: selectedSpeed,
 		});
 
+		// Mark as generate-tab playback so TextDisplay/GenerationProgress show on this tab
+		playerStore.playbackSource.set('generate');
 		playerStore.generate(
 			text.trim(),
 			$settingsStore.defaultVoice,
-			1.0,
+			selectedSpeed,
 			$settingsStore.autoPlay,
 			historyId
 		);
@@ -163,6 +167,9 @@
 				reader.onload = () => {
 					const base64 = reader.result.split(',')[1];
 					window.Android.saveAudioFile(base64, filename, mimeTypes[format] || 'application/octet-stream');
+				};
+				reader.onerror = () => {
+					uploadError = 'Failed to read export data';
 				};
 				reader.readAsDataURL(blob);
 			} else {
@@ -394,14 +401,24 @@
 
 		const ext = file.name.split('.').pop()?.toLowerCase();
 		const audioExtensions = ['mp3', 'aac', 'ogg', 'wav', 'webm', 'm4a'];
+		const documentExtensions = ['pdf', 'doc', 'docx', 'txt', 'md'];
+		const allSupported = [...audioExtensions, ...documentExtensions];
+
+		if (!allSupported.includes(ext)) {
+			uploadError = `Unsupported file type: .${ext}. Supported: ${documentExtensions.join(', ')} (documents), ${audioExtensions.join(', ')} (audio).`;
+			if (fileInput) fileInput.value = '';
+			return;
+		}
 
 		if (audioExtensions.includes(ext)) {
-			// Route audio files to STT transcription
+			// Route audio files to STT transcription — send the raw file directly
+			// to the server for decoding (server uses ffmpeg / MediaCodec which
+			// handle AAC, MP3, OGG, etc. natively). Browser-side WAV conversion
+			// via AudioContext.decodeAudioData() fails for many formats on Android WebView.
 			isTranscribing = true;
 			uploadError = '';
 			try {
-				const wavBlob = await convertToWav(file);
-				const result = await transcribeAudio(wavBlob);
+				const result = await transcribeAudio(file, file.name);
 				if (result.text && result.text.trim()) {
 					text = text ? text + '\n' + result.text.trim() : result.text.trim();
 				} else {
@@ -533,7 +550,7 @@
 		<input
 			bind:this={fileInput}
 			type="file"
-			accept=".pdf,.docx,.txt,.md,.mp3,.aac,.ogg,.wav,.webm,.m4a"
+			accept=".pdf,.doc,.docx,.txt,.md,.mp3,.aac,.ogg,.wav,.webm,.m4a"
 			onchange={handleFileUpload}
 			class="hidden"
 		/>

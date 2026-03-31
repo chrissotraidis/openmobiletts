@@ -111,12 +111,13 @@ export async function healthCheck() {
 
 /**
  * Transcribe audio to text via Moonshine STT.
- * @param {Blob} audioBlob - Audio data (WAV format preferred)
+ * @param {Blob|File} audioBlob - Audio data (any format: WAV, MP3, AAC, OGG, etc.)
+ * @param {string} filename - Filename hint for the server
  * @returns {Promise<{text: string, duration_ms: number, model: string}>}
  */
-export async function transcribeAudio(audioBlob) {
+export async function transcribeAudio(audioBlob, filename = 'recording.wav') {
 	const formData = new FormData();
-	formData.append('audio', audioBlob, 'recording.wav');
+	formData.append('audio', audioBlob, filename);
 
 	const res = await fetch(apiUrl('/api/stt/transcribe'), {
 		method: 'POST',
