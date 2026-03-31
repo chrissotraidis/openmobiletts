@@ -214,7 +214,7 @@ class ProjectStorage(private val baseDir: File) {
     /** Validate project ID to prevent path traversal attacks. */
     private fun validateId(id: String): File {
         val dir = File(projectsDir, id).canonicalFile
-        if (!dir.path.startsWith(projectsDir.canonicalPath)) {
+        if (!dir.path.startsWith(projectsDir.canonicalPath + "/")) {
             throw IllegalArgumentException("Invalid project ID")
         }
         return dir

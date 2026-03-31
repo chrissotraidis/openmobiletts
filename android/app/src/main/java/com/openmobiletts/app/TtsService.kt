@@ -39,12 +39,14 @@ class TtsService : Service() {
     companion object {
         private const val TAG = "TtsService"
         private const val NOTIFICATION_ID = 1
+        private const val NOTIFICATION_ID_GENERATION = 2
         private const val WAKE_LOCK_TAG = "OpenMobileTTS::Playback"
         private const val ACTION_PLAY = "com.openmobiletts.ACTION_PLAY"
         private const val ACTION_PAUSE = "com.openmobiletts.ACTION_PAUSE"
         private const val ACTION_STOP = "com.openmobiletts.ACTION_STOP"
         private const val ACTION_NEXT = "com.openmobiletts.ACTION_NEXT"
         private const val ACTION_PREVIOUS = "com.openmobiletts.ACTION_PREVIOUS"
+        private const val ACTION_DISMISS_GENERATION = "com.openmobiletts.ACTION_DISMISS_GENERATION"
 
         /** Static reference for the JS bridge to access the running instance. */
         @Volatile
@@ -82,6 +84,15 @@ class TtsService : Service() {
     private var lastDurationMs: Long = 0
     private var generationStartTime: Long = 0
 
+    /** True when the playback notification is active (media controls visible). */
+    @Volatile
+    var isPlaybackActive = false
+        private set
+
+    /** True when the user has dismissed the generation notification — suppress further updates. */
+    @Volatile
+    private var generationNotifDismissed = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -114,20 +125,37 @@ class TtsService : Service() {
                 playbackCommandCallback?.invoke("previous")
                 return START_NOT_STICKY
             }
+            ACTION_DISMISS_GENERATION -> {
+                generationNotifDismissed = true
+                return START_NOT_STICKY
+            }
         }
 
         val message = intent?.getStringExtra("message") ?: "Generating speech..."
         val playbackMode = intent?.getBooleanExtra("playback_mode", false) == true
 
-        val notification = if (playbackMode) {
-            val isPlaying = !message.contains("paused", ignoreCase = true)
-            updateMediaSessionState(isPlaying, lastPositionMs, lastDurationMs)
-            buildPlaybackNotification(isPlaying, lastPositionMs, lastDurationMs)
-        } else {
-            buildGenerationNotification(message)
+        // Reset dismiss flag when a new generation starts
+        if (!playbackMode) {
+            generationNotifDismissed = false
         }
 
-        startForeground(NOTIFICATION_ID, notification)
+        if (playbackMode) {
+            isPlaybackActive = true
+            val isPlaying = !message.contains("paused", ignoreCase = true)
+            updateMediaSessionState(isPlaying, lastPositionMs, lastDurationMs)
+            val notification = buildPlaybackNotification(isPlaying, lastPositionMs, lastDurationMs)
+            startForeground(NOTIFICATION_ID, notification)
+        } else if (isPlaybackActive) {
+            // Playback owns the foreground notification — re-post it to satisfy the
+            // startForegroundService contract (each call must be matched with startForeground).
+            // Generation progress will go to NOTIFICATION_ID_GENERATION separately.
+            val notification = buildPlaybackNotification(true, lastPositionMs, lastDurationMs)
+            startForeground(NOTIFICATION_ID, notification)
+        } else {
+            val notification = buildGenerationNotification(message)
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
         if (intent?.getBooleanExtra("acquire_wake_lock", false) == true) {
             acquireWakeLock()
         }
@@ -178,17 +206,22 @@ class TtsService : Service() {
                     )
                 }
                 else -> {
+                    // Generation-related text (e.g. "Audio ready — tap to listen").
+                    // Use separate notification ID when playback is active.
+                    // If user dismissed the generation notification, don't re-post.
+                    if (generationNotifDismissed) return
+                    val notifId = if (isPlaybackActive) NOTIFICATION_ID_GENERATION else NOTIFICATION_ID
                     val genNotification = NotificationCompat.Builder(this, OpenMobileTtsApp.CHANNEL_PROGRESS)
                         .setSmallIcon(R.drawable.ic_notification)
                         .setContentTitle("Generating Speech")
                         .setContentText(text)
                         .setColor(Color.parseColor("#6c63ff"))
                         .setColorized(true)
-                        .setOngoing(true)
+                        .setOngoing(false) // Allow dismiss when generation is done
                         .setContentIntent(buildContentIntent())
                         .build()
                     NotificationManagerCompat.from(this).notify(
-                        NOTIFICATION_ID,
+                        notifId,
                         genNotification,
                     )
                 }
@@ -209,9 +242,13 @@ class TtsService : Service() {
     }
 
     fun updateProgress(current: Int, total: Int) {
-        // Re-acquire wake lock if somehow released — defense-in-depth
-        acquireWakeLock()
+        // Re-acquire wake lock if somehow released — but only when generation
+        // is the sole activity. When playback is active, the playback lifecycle
+        // manages the wake lock; re-acquiring here would override a pause-triggered release.
+        if (!isPlaybackActive) acquireWakeLock()
         if (generationStartTime == 0L) generationStartTime = System.currentTimeMillis()
+        // User dismissed the generation notification — don't re-post it
+        if (generationNotifDismissed) return
         try {
             val percent = if (total > 0) (current * 100) / total else 0
             val elapsed = (System.currentTimeMillis() - generationStartTime) / 1000
@@ -228,21 +265,26 @@ class TtsService : Service() {
                 "~${formatTime(remaining * 1000)} remaining"
             } else null
 
+            // Use a separate notification ID when playback is active so generation
+            // progress doesn't stomp the playback media controls.
+            val notifId = if (isPlaybackActive) NOTIFICATION_ID_GENERATION else NOTIFICATION_ID
+
             val notification = NotificationCompat.Builder(this, OpenMobileTtsApp.CHANNEL_PROGRESS)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(contentText)
                 .setColor(Color.parseColor("#6c63ff"))
                 .setColorized(true)
-                .setOngoing(true)
+                .setOngoing(false) // Allow user to dismiss
                 .setContentIntent(buildContentIntent())
+                .setDeleteIntent(buildDismissGenerationIntent())
                 .apply {
                     if (total > 0) setProgress(total, current, false)
                     else setProgress(0, 0, true)
                     if (subText != null) setSubText(subText)
                 }
                 .build()
-            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, notification)
+            NotificationManagerCompat.from(this).notify(notifId, notification)
         } catch (_: SecurityException) {}
     }
 
@@ -282,7 +324,10 @@ class TtsService : Service() {
 
     private fun buildMediaActionIntent(action: String): PendingIntent {
         val intent = Intent(this, TtsService::class.java).apply { this.action = action }
-        return PendingIntent.getForegroundService(
+        // Use getService (not getForegroundService) — these intents target an already-running
+        // service. getForegroundService would require a startForeground() call within 5s,
+        // but action handlers return early without calling startForeground.
+        return PendingIntent.getService(
             this, action.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -296,10 +341,23 @@ class TtsService : Service() {
             .setContentText(text)
             .setColor(Color.parseColor("#6c63ff"))
             .setColorized(true)
-            .setOngoing(true)
+            .setOngoing(false) // Allow user to dismiss
             .setProgress(0, 0, true)
             .setContentIntent(buildContentIntent())
+            .setDeleteIntent(buildDismissGenerationIntent())
             .build()
+    }
+
+    private fun buildDismissGenerationIntent(): PendingIntent {
+        val intent = Intent(this, TtsService::class.java).apply {
+            action = ACTION_DISMISS_GENERATION
+        }
+        // Use getService (not getForegroundService) — the service is already running,
+        // and getForegroundService would require another startForeground() call.
+        return PendingIntent.getService(
+            this, ACTION_DISMISS_GENERATION.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun buildPlaybackNotification(isPlaying: Boolean, positionMs: Long, durationMs: Long): Notification {
@@ -411,8 +469,14 @@ class TtsService : Service() {
             release()
         }
         mediaSession = null
+        isPlaybackActive = false
+        generationNotifDismissed = false
         releaseWakeLock()
         generationStartTime = 0
+        // Cancel the separate generation notification if it was shown
+        try {
+            NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_GENERATION)
+        } catch (_: SecurityException) {}
         instance = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             stopForeground(STOP_FOREGROUND_REMOVE)

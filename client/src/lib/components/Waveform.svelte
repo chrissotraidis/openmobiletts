@@ -33,6 +33,7 @@
 		return () => {
 			if (animationId) cancelAnimationFrame(animationId);
 			analyser = null; // stops the draw loop if a frame fires after cleanup
+			source.disconnect();
 			if (audioContext) audioContext.close();
 		};
 	});

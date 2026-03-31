@@ -11,6 +11,7 @@ Default storage location: ~/.openmobilevoice/projects/
 
 import json
 import logging
+import re
 import time
 import threading
 from pathlib import Path
@@ -55,6 +56,8 @@ class ProjectStorage:
 
     def get(self, project_id: str) -> Optional[dict]:
         """Get a project by ID. Returns None if not found."""
+        if not self._is_valid_id(project_id):
+            return None
         with self._lock:
             project_dir = self._base_dir / project_id
             meta_file = project_dir / "project.json"
@@ -96,6 +99,8 @@ class ProjectStorage:
         self, project_id: str, content: Optional[str] = None, title: Optional[str] = None
     ) -> bool:
         """Update a project's content and/or title. Returns True if found."""
+        if not self._is_valid_id(project_id):
+            return False
         with self._lock:
             project_dir = self._base_dir / project_id
             meta_file = project_dir / "project.json"
@@ -120,6 +125,8 @@ class ProjectStorage:
 
     def delete(self, project_id: str) -> bool:
         """Delete a project and all its files."""
+        if not self._is_valid_id(project_id):
+            return False
         with self._lock:
             project_dir = self._base_dir / project_id
             if not project_dir.exists():
@@ -188,6 +195,12 @@ class ProjectStorage:
                 "projects": projects,
                 "count": len(projects),
             }
+
+    @staticmethod
+    def _is_valid_id(project_id: str) -> bool:
+        """Validate project ID format to prevent path traversal.
+        Accepts both Python-generated (proj_{hex16}) and Android-generated (proj_{date}_{time}_{rand4}) IDs."""
+        return bool(re.match(r'^proj_([a-f0-9]{16}|\d{8}_\d{6}_\d{4})$', project_id))
 
     def _generate_id(self) -> str:
         import uuid

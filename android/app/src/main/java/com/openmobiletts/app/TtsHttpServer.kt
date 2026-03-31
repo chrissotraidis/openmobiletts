@@ -36,9 +36,8 @@ class TtsHttpServer(
     private val jobs = ConcurrentHashMap<String, TtsJob>()
 
     /** Tracks whether an STT model download is in progress. */
-    @Volatile
-    var sttDownloadInProgress = false
-        private set
+    private val _sttDownloadInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+    val sttDownloadInProgress: Boolean get() = _sttDownloadInProgress.get()
 
     init {
         // Clean up leftover job files from previous sessions
@@ -132,6 +131,7 @@ class TtsHttpServer(
     }
 
     private fun handleDocumentUpload(session: IHTTPSession): Response {
+        var tmpFile: java.io.File? = null
         try {
             val files = HashMap<String, String>()
             session.parseBody(files)
@@ -143,7 +143,7 @@ class TtsHttpServer(
                 )
 
             val originalFilename = session.parms["file"] ?: "upload.txt"
-            val tmpFile = java.io.File(tmpFilePath)
+            tmpFile = java.io.File(tmpFilePath)
 
             val text = try {
                 DocumentExtractor.extract(tmpFile, originalFilename)
@@ -176,6 +176,8 @@ class TtsHttpServer(
                 Response.Status.INTERNAL_ERROR, MIME_JSON,
                 """{"detail":"Upload failed: ${e.message?.replace("\"", "\\\"")}"}"""
             )
+        } finally {
+            tmpFile?.delete()
         }
     }
 
@@ -218,6 +220,7 @@ class TtsHttpServer(
             )
         }
 
+        var tmpFile: java.io.File? = null
         try {
             val files = HashMap<String, String>()
             session.parseBody(files)
@@ -229,7 +232,7 @@ class TtsHttpServer(
                     """{"detail":"No audio data uploaded. Send as multipart field 'audio'."}"""
                 )
 
-            val tmpFile = java.io.File(tmpFilePath)
+            tmpFile = java.io.File(tmpFilePath)
             val originalFilename = session.parms["audio"] ?: session.parms["file"] ?: "audio.wav"
 
             // Decode audio to 16kHz mono PCM float samples via native AudioDecoder
@@ -270,6 +273,8 @@ class TtsHttpServer(
                 Response.Status.INTERNAL_ERROR, MIME_JSON,
                 """{"detail":"Transcription failed: ${e.message?.replace("\"", "\\\"")}"}"""
             )
+        } finally {
+            tmpFile?.delete()
         }
     }
 
@@ -312,8 +317,15 @@ class TtsHttpServer(
             )
         }
 
+        // Atomic check-and-set to prevent concurrent downloads
+        if (!_sttDownloadInProgress.compareAndSet(false, true)) {
+            return newFixedLengthResponse(
+                Response.Status.OK, MIME_JSON,
+                """{"status":"downloading","message":"Download already in progress."}"""
+            )
+        }
+
         // Start download in background thread
-        sttDownloadInProgress = true
         Thread {
             try {
                 AppLog.i(TAG, "Starting STT model download from Settings...")
@@ -336,7 +348,7 @@ class TtsHttpServer(
             } catch (e: Exception) {
                 AppLog.e(TAG, "STT model download failed", e)
             } finally {
-                sttDownloadInProgress = false
+                _sttDownloadInProgress.set(false)
             }
         }.start()
 
@@ -654,16 +666,23 @@ class TtsHttpServer(
 
                     val duration = samples.size.toDouble() / TtsManager.SAMPLE_RATE
 
-                    // Encode as AAC (concatenatable ADTS frames) with WAV fallback
+                    // Encode as AAC (concatenatable ADTS frames) with WAV fallback.
+                    // WAV fallback is only safe on the first chunk — switching mid-stream
+                    // would produce a corrupt file (part AAC, part WAV).
                     val audioBytes: ByteArray
                     if (aacAvailable) {
                         audioBytes = try {
                             AacEncoder.encode(samples)
                         } catch (e: Exception) {
-                            AppLog.w(TAG, "Job $jobId: AAC encoding failed, falling back to WAV: ${e.message}")
-                            aacAvailable = false
-                            job.audioFormat = "audio/wav"
-                            WavEncoder.encode(samples)
+                            if (chunkIndex == 0) {
+                                AppLog.w(TAG, "Job $jobId: AAC encoding failed on first chunk, falling back to WAV: ${e.message}")
+                                aacAvailable = false
+                                job.audioFormat = "audio/wav"
+                                WavEncoder.encode(samples)
+                            } else {
+                                AppLog.e(TAG, "Job $jobId: AAC encoding failed mid-stream at chunk $chunkIndex, cannot switch format")
+                                throw e
+                            }
                         }
                     } else {
                         audioBytes = WavEncoder.encode(samples)
@@ -932,7 +951,7 @@ class TtsJob(
     val jobDir: File,
     val totalChunks: Int,
 ) {
-    val audioFile: File = File(jobDir, "audio.aac")
+    val audioFile: File = File(jobDir, "audio.bin")
     val timingFile: File = File(jobDir, "timing.json")
 
     @Volatile var completedChunks: Int = 0
@@ -1044,13 +1063,20 @@ private class QueueInputStream : InputStream() {
                 return n
             }
 
+            // Check termination flags before blocking on poll to avoid a spurious
+            // 500ms delay when the sentinel is dequeued before `finished` is visible.
+            if (finished || cancelled) return -1
+
             val next = queue.poll(500, TimeUnit.MILLISECONDS)
             if (next == null) {
                 if (finished || cancelled) return -1
                 continue
             }
             if (next.isEmpty()) {
+                // Sentinel — generation is done. Re-check flags (will be true shortly).
                 if (finished || cancelled) return -1
+                // Brief spin for the flag to become visible (avoid 500ms poll delay)
+                Thread.yield()
                 continue
             }
             current = next

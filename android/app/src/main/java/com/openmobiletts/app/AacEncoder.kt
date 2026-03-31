@@ -117,7 +117,8 @@ object AacEncoder {
                 }
             }
 
-            if (iterations >= maxIterations) {
+            // Post-increment leaves iterations at maxIterations + 1 on normal exit
+            if (iterations > maxIterations) {
                 throw IllegalStateException("AAC encoding exceeded max iterations — codec may be stuck")
             }
         } finally {

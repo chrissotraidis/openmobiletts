@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 class DocumentProcessor:
     """Extract text from PDF and DOCX documents."""
 
-    SUPPORTED_FORMATS = {'.pdf', '.docx', '.txt', '.md'}
+    SUPPORTED_FORMATS = {'.pdf', '.doc', '.docx', '.txt', '.md'}
 
     def extract(self, filepath: str) -> str:
         """
@@ -44,6 +44,11 @@ class DocumentProcessor:
 
         if suffix == '.pdf':
             text = self.extract_pdf(filepath)
+        elif suffix == '.doc':
+            raise ValueError(
+                "Legacy .doc format is not supported. "
+                "Please convert to .docx (File → Save As → Word Document) and try again."
+            )
         elif suffix == '.docx':
             text = self.extract_docx(filepath)
         elif suffix == '.txt':

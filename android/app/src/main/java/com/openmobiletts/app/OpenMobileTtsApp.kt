@@ -94,13 +94,35 @@ class OpenMobileTtsApp : Application() {
             httpServer = server
             AppLog.i(TAG, "Server started, alive=${server.isAlive}")
         } catch (e: java.net.BindException) {
-            // Port still in TIME_WAIT from a previous process — wait briefly and retry
-            AppLog.w(TAG, "Port $PORT in use, waiting 2s and retrying: ${e.message}")
-            Thread.sleep(2000)
-            val server = TtsHttpServer(this, ttsManager, sttManager, PORT)
-            server.start()
-            httpServer = server
-            AppLog.i(TAG, "Server started on retry, alive=${server.isAlive}")
+            // Port still in TIME_WAIT from a previous process — retry on a background thread
+            // with a latch so the caller can wait a bounded time without a hard Thread.sleep.
+            AppLog.w(TAG, "Port $PORT in use, retrying: ${e.message}")
+            val latch = java.util.concurrent.CountDownLatch(1)
+            Thread {
+                try {
+                    var retries = 10
+                    while (retries-- > 0) {
+                        try {
+                            Thread.sleep(200)
+                            val server = TtsHttpServer(this, ttsManager, sttManager, PORT)
+                            server.start()
+                            httpServer = server
+                            AppLog.i(TAG, "Server started on retry, alive=${server.isAlive}")
+                            return@Thread
+                        } catch (_: java.net.BindException) {
+                            AppLog.w(TAG, "Port $PORT still in use, retries left=$retries")
+                        }
+                    }
+                    AppLog.e(TAG, "Failed to start server after retries — port $PORT stuck")
+                } catch (e: Exception) {
+                    AppLog.e(TAG, "Server retry failed with unexpected error", e)
+                } finally {
+                    latch.countDown()
+                }
+            }.start()
+            // Wait up to 3 seconds for the retry to succeed — short enough to avoid ANR (5s),
+            // long enough for the port to free up in most cases.
+            latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
         }
     }
 

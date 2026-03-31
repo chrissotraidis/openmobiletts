@@ -24,13 +24,19 @@ function createPlaylistStore() {
 			const current = get(items);
 			if (index < 0 || index >= current.length) return;
 			const ci = get(currentIndex);
-			items.set(current.filter((_, i) => i !== index));
+			const newItems = current.filter((_, i) => i !== index);
+			items.set(newItems);
 			// Adjust currentIndex if needed
 			if (index < ci) {
 				currentIndex.set(ci - 1);
 			} else if (index === ci) {
-				// Removed the currently playing track — reset so advance() doesn't skip
-				currentIndex.set(-1);
+				// Removed the currently playing track. Set index to ci - 1 so that
+				// when the current audio ends, advance() (ci + 1) lands on what was
+				// the next track (now at position ci after the removal).
+				// If ci was 0, we can't go to -1 (advance returns null), so just
+				// reset — the queue stops, which is acceptable when the user
+				// explicitly removes the first/only playing track.
+				currentIndex.set(Math.max(ci - 1, -1));
 			}
 		},
 

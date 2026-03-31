@@ -1,6 +1,6 @@
 # Project Status
 
-**Last Updated:** 2026-03-16
+**Last Updated:** 2026-03-28
 **Current Version:** v2.0.0 (production)
 **Next Version:** v3.0.0 (in development — Phases 1-4 implemented)
 
@@ -50,3 +50,4 @@
 |------|---------|---------|------|-------|
 | 2026-03-16 | 42 | 6 | 5 | First check after Phases 1-4 implementation. 5 features status drift (code written, docs said Not Started). ModelManager.kt naming drift. Missing: StorageSettings.svelte, /api/stt/models/download, history card expansion. |
 | 2026-03-16 (device test) | — | — | — | First Android emulator test. 5 bugs found: wrong STT model URL (critical), missing MODIFY_AUDIO_SETTINGS permission (critical), Generate tab text persistence, dropdown dismiss behavior, no STT download button. 1 feature request: remote VPS connection. See unknowns.md for details. |
+| 2026-03-28 | 38 | 8 | 4 | Model size drift (95→350 MB), voice count (11→53), upload limit (10→100 MB), poll interval (5→2s), version string inconsistency, STT model naming, stale overview.md. BUG-2/BUG-3 resolved since last check. |

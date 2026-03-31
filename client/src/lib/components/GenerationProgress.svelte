@@ -9,6 +9,7 @@
 	let serverTotalChunks = $state(0);
 	let elapsedTime = $state(0);
 	let showCancelConfirm = $state(false);
+	let source = $state('generate');
 
 	const unsubs = [
 		playerStore.state.subscribe((s) => (playerState = s)),
@@ -16,10 +17,13 @@
 		playerStore.inputText.subscribe((t) => (inputText = t)),
 		playerStore.totalChunks.subscribe((n) => (serverTotalChunks = n)),
 		playerStore.generationElapsed.subscribe((t) => (elapsedTime = t)),
+		playerStore.playbackSource.subscribe((s) => (source = s)),
 	];
 	onDestroy(() => unsubs.forEach((u) => u()));
 
-	const isGenerating = $derived(playerState === PlayState.GENERATING);
+	// Only show progress on the Generate tab for content generated there,
+	// not for history entries being regenerated.
+	const isGenerating = $derived(source === 'generate' && playerState === PlayState.GENERATING);
 	const chunksReceived = $derived(segments.length);
 
 	// Use server-reported chunk count when available, otherwise estimate from text length

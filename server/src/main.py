@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 app = FastAPI(
     title="Open Mobile TTS",
     description="Private text-to-speech app — single process, no auth",
-    version="2.0.0",
+    version="3.0.0",
 )
 
 # CORS — allow all origins for local/network access
@@ -337,6 +337,11 @@ async def stream_document(
             except Exception as e:
                 logger.error(f"Document stream error: {e}", exc_info=True)
                 raise
+            finally:
+                # Clean up temp file after the stream is fully consumed (or errors).
+                # Must be inside the generator — the outer finally runs before streaming starts.
+                if file_path.exists():
+                    os.unlink(file_path)
 
         return StreamingResponse(
             generate_stream(),
@@ -348,16 +353,21 @@ async def stream_document(
             },
         )
 
+    except HTTPException:
+        # Clean up temp file on HTTP errors (e.g. file-too-large)
+        if file_path.exists():
+            os.unlink(file_path)
+        raise
+
     except (ValueError, RuntimeError, OSError) as e:
         logger.error(f"Document stream processing error: {e}", exc_info=True)
+        # Clean up temp file on pre-stream errors (extraction/processing failures)
+        if file_path.exists():
+            os.unlink(file_path)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Document processing failed: {e}",
         )
-
-    finally:
-        if file_path.exists():
-            os.unlink(file_path)
 
 
 # ── STT endpoints ──────────────────────────────────────────
@@ -608,6 +618,6 @@ else:
     async def root():
         return {
             "name": "Open Mobile TTS",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "status": "Client not built. Run: cd client && npm run build",
         }

@@ -2,6 +2,7 @@ package com.openmobiletts.app
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -377,7 +378,16 @@ class MainActivity : AppCompatActivity() {
                     fileUploadCallback?.onReceiveValue(null)
                     fileUploadCallback = filePathCallback
                     try {
-                        val intent = fileChooserParams?.createIntent()
+                        // Don't use fileChooserParams?.createIntent() — it maps HTML accept
+                        // extensions to MIME types, but Android's mapping is incomplete
+                        // (.aac, .md, .m4a often unrecognized → greyed out in picker).
+                        // Don't use EXTRA_MIME_TYPES either — Samsung/Xiaomi file pickers
+                        // ignore it when type is */*. Instead, let the user pick ANY file
+                        // and validate the extension after selection in the JS handler.
+                        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                        }
                         fileChooserLauncher.launch(intent)
                     } catch (e: Exception) {
                         Log.e(TAG, "File chooser failed", e)
@@ -427,6 +437,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         TtsService.playbackCommandCallback = null
         TtsService.seekCallback = null
+        // Release any pending file upload callback to unblock the WebView file input
+        fileUploadCallback?.onReceiveValue(null)
+        fileUploadCallback = null
         scope.cancel()
         webView?.destroy()
         webView = null

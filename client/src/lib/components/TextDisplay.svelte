@@ -3,23 +3,30 @@
 	import { AlignLeft } from 'lucide-svelte';
 	import { onDestroy } from 'svelte';
 
+	/** When true, only show for generate-tab playback (not history). Default true. */
+	let { generateOnly = true } = $props();
+
 	let segments = $state([]);
 	let activeIndex = $state(-1);
 	let playerState = $state(PlayState.IDLE);
 	let inputText = $state('');
+	let source = $state('generate');
 
 	const unsubs = [
 		playerStore.segments.subscribe((s) => (segments = s)),
 		playerStore.activeSegmentIndex.subscribe((i) => (activeIndex = i)),
 		playerStore.state.subscribe((s) => (playerState = s)),
 		playerStore.inputText.subscribe((t) => (inputText = t)),
+		playerStore.playbackSource.subscribe((s) => (source = s)),
 	];
 	onDestroy(() => unsubs.forEach((u) => u()));
 
 	const isActive = $derived(
-		playerState === PlayState.GENERATING ||
-		playerState === PlayState.PLAYING ||
-		playerState === PlayState.PAUSED
+		(!generateOnly || source === 'generate') && (
+			playerState === PlayState.GENERATING ||
+			playerState === PlayState.PLAYING ||
+			playerState === PlayState.PAUSED
+		)
 	);
 
 	let scrollContainer = $state(null);

@@ -411,7 +411,11 @@
 
 						<!-- Reset -->
 						<button
-							onclick={() => settingsStore.reset()}
+							onclick={() => {
+							settingsStore.reset();
+							const defaultVoice = voices.find((v) => v.name === 'af_heart');
+							if (defaultVoice) settingsLang = defaultVoice.language;
+						}}
 							class="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors px-1"
 						>
 							<RotateCcw size={12} />
