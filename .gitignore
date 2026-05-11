@@ -118,3 +118,12 @@ android/app/src/main/assets/webapp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local agent / dev tooling state
+.agents/
+.codex/
+.playwright-mcp/
+
+# Local screenshots / visual scratch
+tts-before.png
+tts-after.png
