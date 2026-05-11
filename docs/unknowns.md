@@ -56,6 +56,13 @@ Extracted from EXPANSION-PLAN-OPEN-MOBILE-VOICE.md and user discussion on 2026-0
 - **Fix needed:** Add a download button next to the model status that triggers model download with progress
 - **Files:** `+page.svelte` (Storage & STT settings section)
 
+### BUG-6: Desktop STT model download endpoint missing
+- **Severity:** UX / setup — blocks first-run desktop STT setup from the UI
+- **Symptom:** Web Settings button POSTs `/api/stt/models/download`, but the FastAPI server returns 405 Method Not Allowed
+- **Current workaround:** Manually download `sherpa-onnx-moonshine-base-en-int8` into `~/.cache/sherpa-onnx-moonshine-base-en-int8`
+- **Fix needed:** Add desktop FastAPI download endpoint matching the Android `/api/stt/models/download` contract
+- **Files:** `server/src/main.py`, `client/src/routes/+page.svelte`
+
 ## Feature Requests — Device Testing (3/16/26)
 
 ### FEAT-1: Remote VPS connection for Android

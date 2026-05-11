@@ -133,6 +133,82 @@ export async function transcribeAudio(audioBlob, filename = 'recording.wav') {
 }
 
 /**
+ * Batch transcribe audio files and return a ZIP of Markdown transcripts.
+ * @param {File[]} files - Audio files to transcribe sequentially
+ * @returns {Promise<Blob>} ZIP file containing Markdown transcripts
+ */
+export async function transcribeAudioBatch(files) {
+	const formData = new FormData();
+	for (const file of files) {
+		formData.append('files', file, file.name);
+	}
+
+	const res = await fetch(apiUrl('/api/stt/batch'), {
+		method: 'POST',
+		body: formData,
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Batch transcription failed');
+	}
+
+	return res.blob();
+}
+
+/**
+ * Create a background batch transcription job.
+ * @param {File[]} files - Audio files to transcribe sequentially
+ * @returns {Promise<{id: string, status: string, total: number, completed: number, failed: number, current_file?: string, result_url?: string, files: Array}>}
+ */
+export async function createBatchTranscriptionJob(files) {
+	const formData = new FormData();
+	for (const file of files) {
+		formData.append('files', file, file.name);
+	}
+
+	const res = await fetch(apiUrl('/api/stt/batch/jobs'), {
+		method: 'POST',
+		body: formData,
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Batch transcription failed');
+	}
+
+	return res.json();
+}
+
+/**
+ * Fetch background batch transcription job status.
+ * @param {string} jobId
+ * @returns {Promise<object>}
+ */
+export async function fetchBatchTranscriptionJob(jobId) {
+	const res = await fetch(apiUrl(`/api/stt/batch/jobs/${jobId}`));
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to fetch batch status');
+	}
+	return res.json();
+}
+
+/**
+ * Download a completed batch transcription ZIP.
+ * @param {string} jobId
+ * @returns {Promise<Blob>}
+ */
+export async function downloadBatchTranscriptionZip(jobId) {
+	const res = await fetch(apiUrl(`/api/stt/batch/jobs/${jobId}/download`));
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to download batch ZIP');
+	}
+	return res.blob();
+}
+
+/**
  * Get available STT models and their status.
  * @returns {Promise<{models: Array<{name: string, size_mb: number, downloaded: boolean, active: boolean}>}>}
  */

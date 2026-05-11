@@ -3,6 +3,7 @@
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
 	import { draftStore } from '$lib/stores/draft';
+	import { batchTranscriptionStore } from '$lib/stores/batchTranscription';
 	import Waveform from '$lib/components/Waveform.svelte';
 	import { uploadDocument, fetchVoices, fetchEngines, transcribeAudio, exportDocument, fetchSttModels } from '$lib/services/api';
 	import { Upload, Loader2, Play, ChevronDown, Cpu, X, Mic, Square, Download, AlertTriangle, Save } from 'lucide-svelte';
@@ -12,14 +13,21 @@
 	let isUploading = $state(false);
 	let uploadError = $state('');
 	let fileInput;
+	let batchFileInput;
 	let voices = $state([]);
 	let selectedLang = $state('');
 	let activeEngine = $state('');
 	const isAndroid = typeof window !== 'undefined' && !!window.Android;
+	const audioExtensions = ['mp3', 'aac', 'ogg', 'wav', 'webm', 'm4a'];
+	const documentExtensions = ['pdf', 'doc', 'docx', 'txt', 'md'];
 
 	// Export state
 	let showExportPicker = $state(false);
 	let isExporting = $state(false);
+	// Batch transcription state is held in batchTranscriptionStore so it survives view switches.
+	const isBatchTranscribing = $derived($batchTranscriptionStore.active);
+	const batchStatus = $derived($batchTranscriptionStore.status);
+	const batchProgress = $derived($batchTranscriptionStore.progress);
 
 	// STT model availability
 	let sttModelMissing = $state(false);
@@ -118,7 +126,7 @@
 	});
 
 	const isGenerating = $derived(playerState === PlayState.GENERATING);
-	const isBusy = $derived(isGenerating || isUploading || isRecording || isTranscribing || isExporting);
+	const isBusy = $derived(isGenerating || isUploading || isRecording || isTranscribing || isBatchTranscribing || isExporting);
 
 	function handleGenerate() {
 		if (!text.trim() || isBusy) return;
@@ -400,8 +408,6 @@
 		if (!file) return;
 
 		const ext = file.name.split('.').pop()?.toLowerCase();
-		const audioExtensions = ['mp3', 'aac', 'ogg', 'wav', 'webm', 'm4a'];
-		const documentExtensions = ['pdf', 'doc', 'docx', 'txt', 'md'];
 		const allSupported = [...audioExtensions, ...documentExtensions];
 
 		if (!allSupported.includes(ext)) {
@@ -445,6 +451,33 @@
 		} finally {
 			isUploading = false;
 			if (fileInput) fileInput.value = '';
+		}
+	}
+
+	async function handleBatchUpload(event) {
+		const selected = Array.from(event.target.files || []);
+		if (selected.length === 0) return;
+
+		const audioFiles = selected.filter((file) => {
+			const ext = file.name.split('.').pop()?.toLowerCase();
+			return audioExtensions.includes(ext);
+		});
+
+		if (audioFiles.length !== selected.length) {
+			uploadError = 'Batch Upload only accepts audio files: MP3, AAC, OGG, WAV, WEBM, or M4A.';
+			if (batchFileInput) batchFileInput.value = '';
+			return;
+		}
+
+		uploadError = '';
+		batchTranscriptionStore.clearError();
+		try {
+			await batchTranscriptionStore.start(audioFiles);
+		} finally {
+			if (batchFileInput) batchFileInput.value = '';
+			if ($batchTranscriptionStore.error) {
+				uploadError = $batchTranscriptionStore.error;
+			}
 		}
 	}
 
@@ -511,12 +544,52 @@
 		</div>
 	{/if}
 
-	<!-- Controls Row -->
-	<div class="flex flex-col sm:flex-row gap-3">
+	{#if isBatchTranscribing || batchStatus}
+		<div class="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 space-y-3">
+			<div class="flex items-center gap-3">
+				{#if isBatchTranscribing}
+					<Loader2 size={16} class="animate-spin text-blue-400" />
+				{:else}
+					<Download size={16} class="text-blue-400" />
+				{/if}
+				<span class="text-blue-400 text-sm">{batchStatus}</span>
+			</div>
+			{#if batchProgress}
+				<div class="space-y-2">
+					<div class="h-1.5 bg-white/5 rounded-full overflow-hidden">
+						<div
+							class="h-full bg-blue-500 rounded-full transition-all duration-300"
+							style="width: {Math.min(100, Math.round(((batchProgress.completed + batchProgress.failed) / Math.max(1, batchProgress.total)) * 100))}%"
+						></div>
+					</div>
+					<div class="flex items-center justify-between text-[10px] text-slate-500">
+						<span>{batchProgress.completed} complete</span>
+						<span>{batchProgress.failed} failed</span>
+						<span>{batchProgress.total} total</span>
+					</div>
+					{#if batchProgress.files?.length}
+						<div class="max-h-28 overflow-y-auto rounded-lg border border-white/5 divide-y divide-white/5">
+							{#each batchProgress.files as item}
+								<div class="flex items-center justify-between gap-3 px-3 py-1.5 text-[11px]">
+									<span class="truncate text-slate-300">{item.source_file}</span>
+									<span class="shrink-0 {item.status === 'complete' ? 'text-emerald-400' : item.status === 'failed' ? 'text-red-400' : item.status === 'running' ? 'text-blue-400' : 'text-slate-500'}">
+										{item.status}
+									</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Input sources + voice config -->
+	<div class="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-3">
 		<!-- Mic Button -->
 		<button
 			onclick={isRecording ? stopRecording : startRecording}
-			disabled={isGenerating || isUploading || isTranscribing}
+			disabled={isGenerating || isUploading || isTranscribing || isBatchTranscribing}
 			class="btn flex items-center justify-center gap-2 text-sm sm:w-auto {isRecording ? 'bg-red-500/20 border-red-500/40 text-red-400 hover:bg-red-500/30' : sttModelMissing ? 'btn-secondary opacity-60' : 'btn-secondary'}"
 			title={sttModelMissing ? 'STT model not installed — go to Settings to download' : 'Record audio for transcription'}
 		>
@@ -555,11 +628,33 @@
 			class="hidden"
 		/>
 
-		<!-- Spacer -->
-		<div class="flex-1"></div>
+		<!-- Batch Upload Button -->
+		<button
+			onclick={() => batchFileInput?.click()}
+			disabled={isBusy}
+			class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
+			title="Select multiple audio files and download Markdown transcripts as a ZIP"
+		>
+			{#if isBatchTranscribing}
+				<Loader2 size={16} class="animate-spin" />
+				<span>Batching...</span>
+			{:else}
+				<Download size={16} />
+				<span>Batch Upload</span>
+			{/if}
+		</button>
 
-		<!-- Engine + Language + Voice (inline, wraps on mobile) -->
-		<div class="flex items-center gap-2 flex-wrap">
+		<input
+			bind:this={batchFileInput}
+			type="file"
+			multiple
+			accept=".mp3,.aac,.ogg,.wav,.webm,.m4a"
+			onchange={handleBatchUpload}
+			class="hidden"
+		/>
+
+		<!-- Engine + Language + Voice (pushed right on desktop) -->
+		<div class="flex items-center gap-2 flex-wrap sm:ml-auto">
 			{#if activeEngine}
 				<span class="flex items-center gap-1 text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg px-2 py-2 font-medium whitespace-nowrap">
 					<Cpu size={11} class="text-blue-400" />
@@ -604,9 +699,11 @@
 					</div>
 				</div>
 			{/if}
-
 		</div>
+	</div>
 
+	<!-- Output actions -->
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
 		<!-- Save as Note Button -->
 		<button
 			onclick={() => {
@@ -626,27 +723,12 @@
 			<span>Save</span>
 		</button>
 
-		<!-- Generate Button -->
-		<button
-			onclick={handleGenerate}
-			disabled={!text.trim() || isBusy}
-			class="btn btn-primary flex items-center justify-center gap-2 text-sm font-bold sm:w-auto"
-		>
-			{#if isGenerating}
-				<Loader2 size={16} class="animate-spin" />
-				<span>Generating...</span>
-			{:else}
-				<Play size={16} />
-				<span>Generate</span>
-			{/if}
-		</button>
-
 		<!-- Export Button -->
 		<div class="relative" data-export-picker>
 			<button
 				onclick={() => showExportPicker = !showExportPicker}
 				disabled={!text.trim() || isBusy}
-				class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
+				class="btn btn-secondary flex items-center justify-center gap-2 text-sm w-full sm:w-auto"
 			>
 				{#if isExporting}
 					<Loader2 size={16} class="animate-spin" />
@@ -679,9 +761,24 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Generate Button -->
+		<button
+			onclick={handleGenerate}
+			disabled={!text.trim() || isBusy}
+			class="btn btn-primary flex items-center justify-center gap-2 text-sm font-bold sm:w-auto"
+		>
+			{#if isGenerating}
+				<Loader2 size={16} class="animate-spin" />
+				<span>Generating...</span>
+			{:else}
+				<Play size={16} />
+				<span>Generate</span>
+			{/if}
+		</button>
 	</div>
 
 	<p class="text-[10px] text-slate-600 px-1">
-		{isAndroid ? 'Dictate or upload documents (PDF, DOCX, TXT, MD) and audio files (MP3, AAC, WAV).' : 'Upload documents or audio files for transcription. Press Ctrl+Enter to generate.'}
+		{isAndroid ? 'Dictate or upload documents (PDF, DOCX, TXT, MD) and audio files (MP3, AAC, WAV).' : 'Upload one document or audio file, or batch upload audio files for a Markdown ZIP. Press Ctrl+Enter to generate.'}
 	</p>
 </div>
