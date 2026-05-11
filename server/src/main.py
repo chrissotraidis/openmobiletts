@@ -3,8 +3,11 @@
 import io
 import json
 import os
+import threading
 import time
 import uuid
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,7 +21,7 @@ from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
 from .tts_engine import EngineManager
 from .logging_config import setup_logging, get_logger, preview_text, export_logs_json, clear_logs
-from .stt_engine import SttEngine
+from .stt_engine import SttEngine, polish_transcript
 from .export_manager import export_pdf, export_markdown, export_plaintext
 from .project_storage import ProjectStorage
 
@@ -372,6 +375,227 @@ async def stream_document(
 
 # ── STT endpoints ──────────────────────────────────────────
 
+SUPPORTED_AUDIO_FORMATS = {".mp3", ".aac", ".ogg", ".wav", ".webm", ".m4a"}
+MAX_BATCH_AUDIO_FILES = 100
+BATCH_JOBS: dict[str, dict] = {}
+BATCH_JOBS_LOCK = threading.Lock()
+
+
+def _safe_export_stem(filename: str) -> str:
+    """Return a filesystem-safe stem for exported transcript files."""
+    stem = Path(filename).stem.strip() or "transcript"
+    safe = "".join(c if c.isalnum() or c in " ._-" else "_" for c in stem)
+    safe = safe.strip(" ._-") or "transcript"
+    return safe[:80]
+
+
+def _unique_markdown_name(filename: str, used_names: set[str]) -> str:
+    """Create a unique Markdown filename based on the source audio filename."""
+    base = _safe_export_stem(filename)
+    candidate = f"{base}.md"
+    counter = 2
+    while candidate.lower() in used_names:
+        candidate = f"{base}-{counter}.md"
+        counter += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
+def _format_transcript_markdown(
+    *,
+    title: str,
+    source_filename: str,
+    model: str,
+    transcribed_at: str,
+    transcript: str,
+    error: Optional[str] = None,
+) -> str:
+    """Build the Markdown file body for one transcript or failed file."""
+    status_text = "Failed" if error else "Complete"
+    lines = [
+        f"# {title}",
+        "",
+        f"Source file: `{source_filename}`",
+        f"Transcribed: {transcribed_at}",
+        f"Model: {model}",
+        "Speaker mode: Not separated",
+        f"Status: {status_text}",
+        "",
+    ]
+    if error:
+        lines.extend(["## Error", "", error.strip() or "Unknown error", ""])
+    else:
+        body = polish_transcript(transcript) or "_No speech detected._"
+        lines.extend(["## Transcript", "", body, ""])
+    return "\n".join(lines)
+
+
+def _ensure_stt_ready() -> None:
+    """Initialize the STT engine or raise a user-facing HTTP error."""
+    if not stt_engine.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="STT not available — sherpa_onnx not installed",
+        )
+
+    if stt_engine.is_initialized:
+        return
+
+    model_dir = Path.home() / ".cache" / SttEngine.MODEL_NAME
+    if not model_dir.exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"STT model not found at {model_dir}. Download it first.",
+        )
+    stt_engine.init(str(model_dir))
+
+
+def _public_batch_job(job: dict) -> dict:
+    """Return the browser-safe representation of a batch job."""
+    return {
+        "id": job["id"],
+        "status": job["status"],
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+        "total": job["total"],
+        "completed": job["completed"],
+        "failed": job["failed"],
+        "current_file": job.get("current_file"),
+        "error": job.get("error"),
+        "result_url": job.get("result_url"),
+        "files": job["files"],
+    }
+
+
+def _get_batch_job(job_id: str) -> dict:
+    with BATCH_JOBS_LOCK:
+        job = BATCH_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch job not found")
+        return _public_batch_job(job)
+
+
+def _update_batch_job(job_id: str, **fields) -> None:
+    with BATCH_JOBS_LOCK:
+        job = BATCH_JOBS[job_id]
+        job.update(fields)
+        job["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _update_batch_file(job_id: str, index: int, **fields) -> None:
+    with BATCH_JOBS_LOCK:
+        job = BATCH_JOBS[job_id]
+        job["files"][index].update(fields)
+        job["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _run_batch_job(job_id: str, job_dir: Path, items: list[dict]) -> None:
+    """Process a saved batch job in the background."""
+    try:
+        logger.info(f"Batch job started: id={job_id}, files={len(items)}, workspace={job_dir}")
+        _ensure_stt_ready()
+        _update_batch_job(job_id, status="running", current_file=None)
+
+        transcribed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        used_names: set[str] = set()
+        results = []
+        zip_path = job_dir / "transcripts.zip"
+
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for index, item in enumerate(items):
+                source_name = item["source_name"]
+                markdown_name = _unique_markdown_name(source_name, used_names)
+                title = Path(markdown_name).stem
+                logger.info(
+                    f"Batch job file started: id={job_id}, file={index + 1}/{len(items)}, "
+                    f"source='{source_name}', transcript='{markdown_name}'"
+                )
+                _update_batch_file(
+                    job_id,
+                    index,
+                    status="running",
+                    transcript_file=markdown_name,
+                    error=None,
+                )
+                _update_batch_job(job_id, current_file=source_name)
+
+                result = {
+                    "source_file": source_name,
+                    "transcript_file": markdown_name,
+                    "status": "pending",
+                    "model": "moonshine-v2-medium",
+                    "error": None,
+                }
+
+                try:
+                    if item.get("validation_error"):
+                        raise ValueError(item["validation_error"])
+
+                    transcript = stt_engine.transcribe_file(str(item["file_path"]))
+                    markdown = _format_transcript_markdown(
+                        title=title,
+                        source_filename=source_name,
+                        model="moonshine-v2-medium",
+                        transcribed_at=transcribed_at,
+                        transcript=transcript,
+                    )
+                    result["status"] = "complete"
+                    result["text_length"] = len(transcript)
+                    archive.writestr(markdown_name, markdown)
+                    _update_batch_file(job_id, index, status="complete", text_length=len(transcript))
+                    logger.info(
+                        f"Batch job file complete: id={job_id}, file={index + 1}/{len(items)}, "
+                        f"source='{source_name}', chars={len(transcript)}"
+                    )
+                    with BATCH_JOBS_LOCK:
+                        BATCH_JOBS[job_id]["completed"] += 1
+
+                except Exception as e:
+                    error = str(e)
+                    logger.error(f"Batch STT failed for {source_name}: {error}", exc_info=True)
+                    markdown = _format_transcript_markdown(
+                        title=title,
+                        source_filename=source_name,
+                        model="moonshine-v2-medium",
+                        transcribed_at=transcribed_at,
+                        transcript="",
+                        error=error,
+                    )
+                    result["status"] = "failed"
+                    result["error"] = error
+                    archive.writestr(markdown_name, markdown)
+                    _update_batch_file(job_id, index, status="failed", error=error)
+                    with BATCH_JOBS_LOCK:
+                        BATCH_JOBS[job_id]["failed"] += 1
+
+                finally:
+                    results.append(result)
+                    file_path = item.get("file_path")
+                    if file_path and Path(file_path).exists():
+                        os.unlink(file_path)
+
+            completed = sum(1 for item in results if item["status"] == "complete")
+            failed = len(results) - completed
+
+        _update_batch_job(
+            job_id,
+            status="complete",
+            current_file=None,
+            result_url=f"/api/stt/batch/jobs/{job_id}/download",
+            zip_path=str(zip_path),
+        )
+        logger.info(
+            f"Batch job complete: id={job_id}, completed={completed}, failed={failed}, zip={zip_path}"
+        )
+
+    except HTTPException as e:
+        logger.warning(f"Batch job failed before completion: id={job_id}, error={e.detail}")
+        _update_batch_job(job_id, status="failed", current_file=None, error=str(e.detail))
+    except Exception as e:
+        logger.error(f"Batch job failed: {job_id}: {e}", exc_info=True)
+        _update_batch_job(job_id, status="failed", current_file=None, error=str(e))
+
+
 class SttTranscribeResponse(BaseModel):
     text: str
     duration_ms: int
@@ -381,12 +605,6 @@ class SttTranscribeResponse(BaseModel):
 @app.post("/api/stt/transcribe", response_model=SttTranscribeResponse)
 async def stt_transcribe(audio: UploadFile = File(...)):
     """Transcribe uploaded audio to text via Moonshine v2."""
-    if not stt_engine.is_available:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="STT not available — sherpa_onnx not installed",
-        )
-
     # Save uploaded audio to temp file
     safe_name = f"{uuid.uuid4().hex[:8]}_{audio.filename or 'audio.wav'}"
     file_path = Path(settings.UPLOAD_DIR) / safe_name
@@ -404,17 +622,7 @@ async def stt_transcribe(audio: UploadFile = File(...)):
                     )
                 f.write(chunk)
 
-        # Lazy init STT engine
-        if not stt_engine.is_initialized:
-            # Look for model in standard locations
-            model_dir = Path.home() / ".cache" / SttEngine.MODEL_NAME
-            if not model_dir.exists():
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"STT model not found at {model_dir}. Download it first.",
-                )
-            stt_engine.init(str(model_dir))
-
+        _ensure_stt_ready()
         text = stt_engine.transcribe_file(str(file_path))
         duration_ms = 0  # TODO: extract from audio metadata
 
@@ -431,6 +639,229 @@ async def stt_transcribe(audio: UploadFile = File(...)):
     finally:
         if file_path.exists():
             os.unlink(file_path)
+
+
+@app.post("/api/stt/batch/jobs", status_code=status.HTTP_202_ACCEPTED)
+async def create_stt_batch_job(files: List[UploadFile] = File(...)):
+    """Create a background batch transcription job."""
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded")
+
+    if len(files) > MAX_BATCH_AUDIO_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many files. Maximum batch size: {MAX_BATCH_AUDIO_FILES}",
+        )
+
+    job_id = uuid.uuid4().hex
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    job_dir = Path(settings.UPLOAD_DIR) / f"batch_{job_id}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Batch job created: id={job_id}, submitted_files={len(files)}")
+
+    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    items = []
+    job_files = []
+
+    for index, audio in enumerate(files, start=1):
+        source_name = Path(audio.filename or f"audio-{index}.wav").name
+        suffix = Path(source_name).suffix.lower()
+        file_path = job_dir / f"{uuid.uuid4().hex[:8]}_{source_name}"
+        validation_error = None
+        file_size = 0
+
+        if suffix not in SUPPORTED_AUDIO_FORMATS:
+            supported = ", ".join(sorted(SUPPORTED_AUDIO_FORMATS))
+            validation_error = f"Unsupported audio format: {suffix}. Supported: {supported}"
+            logger.warning(
+                f"Batch job upload rejected: id={job_id}, source='{source_name}', error={validation_error}"
+            )
+        else:
+            try:
+                with open(file_path, "wb") as f:
+                    while chunk := await audio.read(8192):
+                        file_size += len(chunk)
+                        if file_size > max_size_bytes:
+                            validation_error = (
+                                f"Audio file too large. Maximum: {settings.MAX_UPLOAD_SIZE_MB}MB"
+                            )
+                            logger.warning(
+                                f"Batch job upload rejected: id={job_id}, source='{source_name}', "
+                                f"bytes={file_size}, error={validation_error}"
+                            )
+                            break
+                        f.write(chunk)
+                if validation_error and file_path.exists():
+                    os.unlink(file_path)
+            except Exception as e:
+                validation_error = f"Could not save upload: {e}"
+                logger.error(
+                    f"Batch job upload save failed: id={job_id}, source='{source_name}', error={e}",
+                    exc_info=True,
+                )
+                if file_path.exists():
+                    os.unlink(file_path)
+
+        if not validation_error:
+            logger.info(
+                f"Batch job file queued: id={job_id}, file={index}/{len(files)}, "
+                f"source='{source_name}', bytes={file_size}"
+            )
+
+        items.append(
+            {
+                "source_name": source_name,
+                "file_path": None if validation_error else file_path,
+                "validation_error": validation_error,
+            }
+        )
+        job_files.append(
+            {
+                "source_file": source_name,
+                "transcript_file": None,
+                "status": "queued",
+                "error": validation_error,
+            }
+        )
+
+    with BATCH_JOBS_LOCK:
+        BATCH_JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "total": len(job_files),
+            "completed": 0,
+            "failed": 0,
+            "current_file": None,
+            "error": None,
+            "result_url": None,
+            "zip_path": None,
+            "files": job_files,
+        }
+
+    thread = threading.Thread(target=_run_batch_job, args=(job_id, job_dir, items), daemon=True)
+    thread.start()
+
+    return _get_batch_job(job_id)
+
+
+@app.get("/api/stt/batch/jobs/{job_id}")
+async def get_stt_batch_job(job_id: str):
+    """Get background batch transcription job status."""
+    return _get_batch_job(job_id)
+
+
+@app.get("/api/stt/batch/jobs/{job_id}/download")
+async def download_stt_batch_job(job_id: str):
+    """Download a completed batch transcription ZIP."""
+    with BATCH_JOBS_LOCK:
+        job = BATCH_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch job not found")
+        if job["status"] != "complete" or not job.get("zip_path"):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Batch job is not complete")
+        zip_path = Path(job["zip_path"])
+
+    if not zip_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch ZIP not found")
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"openmobiletts-transcripts-{job_id[:8]}.zip",
+    )
+
+
+@app.post("/api/stt/batch")
+async def stt_batch_transcribe(files: List[UploadFile] = File(...)):
+    """Transcribe multiple audio files sequentially and return Markdown ZIP."""
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded")
+
+    if len(files) > MAX_BATCH_AUDIO_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many files. Maximum batch size: {MAX_BATCH_AUDIO_FILES}",
+        )
+
+    _ensure_stt_ready()
+
+    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    transcribed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    used_names: set[str] = set()
+    results = []
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index, audio in enumerate(files, start=1):
+            source_name = Path(audio.filename or f"audio-{index}.wav").name
+            suffix = Path(source_name).suffix.lower()
+            markdown_name = _unique_markdown_name(source_name, used_names)
+            title = Path(markdown_name).stem
+            file_path = Path(settings.UPLOAD_DIR) / f"{uuid.uuid4().hex[:8]}_{source_name}"
+            result = {
+                "source_file": source_name,
+                "transcript_file": markdown_name,
+                "status": "pending",
+                "model": "moonshine-v2-medium",
+                "error": None,
+            }
+
+            try:
+                if suffix not in SUPPORTED_AUDIO_FORMATS:
+                    supported = ", ".join(sorted(SUPPORTED_AUDIO_FORMATS))
+                    raise ValueError(f"Unsupported audio format: {suffix}. Supported: {supported}")
+
+                file_size = 0
+                with open(file_path, "wb") as f:
+                    while chunk := await audio.read(8192):
+                        file_size += len(chunk)
+                        if file_size > max_size_bytes:
+                            raise ValueError(
+                                f"Audio file too large. Maximum: {settings.MAX_UPLOAD_SIZE_MB}MB"
+                            )
+                        f.write(chunk)
+
+                transcript = stt_engine.transcribe_file(str(file_path))
+                markdown = _format_transcript_markdown(
+                    title=title,
+                    source_filename=source_name,
+                    model="moonshine-v2-medium",
+                    transcribed_at=transcribed_at,
+                    transcript=transcript,
+                )
+                result["status"] = "complete"
+                result["text_length"] = len(transcript)
+                archive.writestr(markdown_name, markdown)
+
+            except Exception as e:
+                error = str(e)
+                logger.error(f"Batch STT failed for {source_name}: {error}", exc_info=True)
+                markdown = _format_transcript_markdown(
+                    title=title,
+                    source_filename=source_name,
+                    model="moonshine-v2-medium",
+                    transcribed_at=transcribed_at,
+                    transcript="",
+                    error=error,
+                )
+                result["status"] = "failed"
+                result["error"] = error
+                archive.writestr(markdown_name, markdown)
+
+            finally:
+                results.append(result)
+                if file_path.exists():
+                    os.unlink(file_path)
+
+    zip_buffer.seek(0)
+    download_name = f"openmobiletts-transcripts-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
 
 
 @app.get("/api/stt/models")

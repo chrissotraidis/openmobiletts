@@ -42,7 +42,15 @@ class TestDocumentProcessor:
     def test_markdown_to_plain(self):
         """Test markdown to plain text conversion."""
         markdown = "# Heading\n\n**Bold text** and *italic*.\n\n- List item\n"
-        plain = self.processor._markdown_to_plain(markdown)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write(markdown)
+            temp_path = f.name
+
+        try:
+            plain = self.processor.extract(temp_path)
+        finally:
+            Path(temp_path).unlink()
 
         # Check markdown formatting is removed
         assert "#" not in plain

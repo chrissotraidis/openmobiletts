@@ -16,6 +16,7 @@ Users who want private, local text-to-speech and speech-to-text with zero cloud 
 - **[Document Export](document-export/document-export-overview.md):** Save text as PDF/MD/TXT (v3.0)
 - **[Audio Playback](audio-playback/audio-playback-overview.md):** Player with queue, history, synchronized text highlighting (implemented)
 - **[Audio Import](audio-import/audio-import-overview.md):** Import audio files (mp3/aac/ogg/wav) for transcription (v3.0)
+- **[Batch Transcription](batch-transcription/batch-transcription-overview.md):** Upload many audio files and export a ZIP of Markdown transcripts (v3.1)
 - **[Project Storage](project-storage/project-storage-overview.md):** JSON-based local project management with auto-cleanup (v3.0)
 - **[Unified Input](unified-input/unified-input-overview.md):** Redesigned Generate tab as voice+text scratchpad (v3.0)
 - **[Android App](android-app/android-app-overview.md):** WebView + NanoHTTPD + Sherpa-ONNX native bridge (implemented)

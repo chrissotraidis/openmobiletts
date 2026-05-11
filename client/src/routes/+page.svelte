@@ -11,6 +11,7 @@
 	import { apiUrl, healthCheck, fetchVoices, fetchEngines, switchEngine, fetchSttModels } from '$lib/services/api';
 	import { draftStore } from '$lib/stores/draft';
 	import { historyStore } from '$lib/stores/history';
+	import { batchTranscriptionStore } from '$lib/stores/batchTranscription';
 	import { Mic, Plus, History, Settings, ShieldCheck, Zap, Volume2, Sliders, Info, RotateCcw, ChevronDown, FileDown, Download, Loader2, Wifi, CheckCircle, XCircle, Cpu, HardDrive, Trash2, AlertTriangle } from 'lucide-svelte';
 
 	let isIOS = $state(false);
@@ -225,6 +226,9 @@
 			>
 				<Plus size={18} />
 				<span class="text-sm">New Audio</span>
+				{#if $batchTranscriptionStore.active}
+					<Loader2 size={12} class="ml-auto animate-spin text-blue-400" />
+				{/if}
 			</button>
 			<button
 				onclick={() => switchTab('history')}

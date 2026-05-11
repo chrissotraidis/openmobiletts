@@ -15,6 +15,7 @@
 | [STT](stt/stt-overview.md) | 🟡 In Progress | Backend + API done, needs StorageSettings UI |
 | [Document Export](document-export/document-export-overview.md) | 🟡 In Progress | Backend + API + UI done (inline in TextInput) |
 | [Audio Import](audio-import/audio-import-overview.md) | 🟡 In Progress | AudioDecoder + upload routing done |
+| [Batch Transcription](batch-transcription/batch-transcription-overview.md) | 🟡 In Progress | Batch ZIP export with background status polling; speaker diarization planned separately |
 | [Project Storage](project-storage/project-storage-overview.md) | 🟡 In Progress | CRUD + cleanup done, needs StorageSettings UI |
 | [Unified Input](unified-input/unified-input-overview.md) | 🟡 In Progress | Mic button + export picker done in TextInput |
 | [Multi-Language](multi-language/multi-language-overview.md) | 🔵 Not Started | 9-language TTS, planned |
@@ -28,6 +29,7 @@
 | Phase 3: Export + Projects | PDF/MD/TXT export, project storage | 🟢 Complete |
 | Phase 4: Desktop Parity | Python STT, export, project storage | 🟢 Complete |
 | Phase 5: Polish + Testing | Testing, UI polish, docs | 🟡 In Progress |
+| Phase 6: Batch Transcription | Multi-file audio upload, Markdown ZIP export, diarization follow-up | 🟡 In Progress |
 
 ## Documentation Coverage
 
@@ -38,6 +40,7 @@
 | Audio Playback | Thorough | queue-and-history-flow.md | — | Yes (existing) |
 | Android App | Thorough | model-download-flow.md | — | Yes (partial v3.0) |
 | STT | Thorough | dictation-flow.md | edge-cases.md | Yes |
+| Batch Transcription | Moderate | batch-export-flow.md | edge-cases.md | Yes |
 | Document Export | Thorough | export-flow.md | edge-cases.md | Yes |
 | Audio Import | Thorough | import-flow.md | edge-cases.md | Yes |
 | Project Storage | Thorough | project-lifecycle-flow.md | edge-cases.md | Yes |
