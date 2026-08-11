@@ -1,3 +1,5 @@
-"""Open Mobile TTS Server - FastAPI application with Kokoro TTS."""
+"""Open Mobile TTS Server - FastAPI application with local speech models."""
 
-__version__ = "0.1.0"
+from .app_info import APP_VERSION
+
+__version__ = APP_VERSION

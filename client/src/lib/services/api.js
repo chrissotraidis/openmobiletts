@@ -15,6 +15,9 @@ const SETTINGS_KEY = 'openmobiletts_settings';
  * Returns '' for same-origin web mode, or 'http://192.168.x.x:8000' for Android.
  */
 function getBaseUrl() {
+	// The Android shell owns an in-process loopback backend. Never let a stale
+	// browser preference redirect its privileged WebView to a remote server.
+	if (typeof window !== 'undefined' && window.Android) return '';
 	try {
 		const stored = localStorage.getItem(SETTINGS_KEY);
 		if (stored) {
@@ -37,6 +40,23 @@ function getBaseUrl() {
  */
 export function apiUrl(path) {
 	return `${getBaseUrl()}${path}`;
+}
+
+/**
+ * Fetch the backend feature contract used by the shared UI.
+ * @returns {Promise<{schema_version: number, platform: string, features: Record<string, boolean>}>}
+ */
+export async function fetchCapabilities() {
+	const res = await fetch(apiUrl('/api/capabilities'));
+	if (!res.ok) throw new Error('Failed to fetch platform capabilities');
+	return res.json();
+}
+
+/** Fetch the repository-owned model identity, integrity, and license catalog. */
+export async function fetchModelCatalog() {
+	const res = await fetch(apiUrl('/api/models/catalog'));
+	if (!res.ok) throw new Error('Failed to fetch model catalog');
+	return res.json();
 }
 
 /**
@@ -84,7 +104,7 @@ export async function fetchEngines() {
 /**
  * Switch the active TTS engine.
  * @param {string} name - Engine name (e.g., 'kokoro', 'sherpa-onnx')
- * @returns {Promise<{engine: string, voices: number}>}
+ * @returns {Promise<{engine: string, voices: number, restart_required?: boolean}>}
  */
 export async function switchEngine(name) {
 	const res = await fetch(apiUrl('/api/engine/switch'), {
@@ -159,7 +179,7 @@ export async function transcribeAudioBatch(files) {
 /**
  * Create a background batch transcription job.
  * @param {File[]} files - Audio files to transcribe sequentially
- * @returns {Promise<{id: string, status: string, total: number, completed: number, failed: number, current_file?: string, result_url?: string, files: Array}>}
+ * @returns {Promise<{id: string, status: string, total: number, completed: number, failed: number, current_file?: string, result_url?: string, error?: string, files: Array}>}
  */
 export async function createBatchTranscriptionJob(files) {
 	const formData = new FormData();
@@ -210,11 +230,100 @@ export async function downloadBatchTranscriptionZip(jobId) {
 
 /**
  * Get available STT models and their status.
- * @returns {Promise<{models: Array<{name: string, size_mb: number, downloaded: boolean, active: boolean}>}>}
+ * @returns {Promise<{models: Array<object>}>}
  */
 export async function fetchSttModels() {
 	const res = await fetch(apiUrl('/api/stt/models'));
 	if (!res.ok) throw new Error('Failed to fetch STT models');
+	return res.json();
+}
+
+/**
+ * Start downloading the pinned STT model.
+ * @param {string} modelId
+ * @returns {Promise<{status: string, model: object}>}
+ */
+export async function downloadSttModel(modelId) {
+	const res = await fetch(apiUrl('/api/stt/models/download'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model: modelId }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to start model download');
+	}
+	return res.json();
+}
+
+/** Pause the durable Android STT model download. */
+export async function cancelSttModelDownload() {
+	const res = await fetch(apiUrl('/api/stt/models/download/cancel'), { method: 'POST' });
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to pause model download');
+	}
+	return res.json();
+}
+
+/** Fetch Android on-device TTS models and their install/activation state. */
+export async function fetchTtsModels() {
+	const res = await fetch(apiUrl('/api/tts/models'));
+	if (!res.ok) throw new Error('Failed to fetch voice models');
+	return res.json();
+}
+
+/** Start or resume an Android on-device TTS model download. */
+export async function downloadTtsModel(modelId) {
+	const res = await fetch(apiUrl('/api/tts/models/download'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model: modelId }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to start voice model download');
+	}
+	return res.json();
+}
+
+/** Pause one durable Android TTS model download. */
+export async function cancelTtsModelDownload(modelId) {
+	const res = await fetch(apiUrl('/api/tts/models/download/cancel'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model: modelId }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to pause voice model download');
+	}
+	return res.json();
+}
+
+/** Activate an installed Android TTS model. */
+export async function activateTtsModel(modelId) {
+	const res = await fetch(apiUrl('/api/tts/models/activate'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model: modelId }),
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to activate voice model');
+	}
+	return res.json();
+}
+
+/** Remove an inactive experimental Android TTS model. */
+export async function deleteTtsModel(modelId) {
+	const res = await fetch(apiUrl(`/api/tts/models/${encodeURIComponent(modelId)}`), {
+		method: 'DELETE',
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: res.statusText }));
+		throw new Error(err.detail || 'Failed to remove voice model');
+	}
 	return res.json();
 }
 

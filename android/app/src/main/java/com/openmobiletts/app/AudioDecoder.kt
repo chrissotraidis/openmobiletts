@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -18,6 +19,8 @@ object AudioDecoder {
     private const val TAG = "AudioDecoder"
     private const val TARGET_SAMPLE_RATE = 16000
     private const val TIMEOUT_US = 10_000L // 10ms codec timeout
+    const val MAX_DURATION_SECONDS = 15 * 60
+    const val MAX_SOURCE_BYTES = 256L * 1024 * 1024
 
     /**
      * Decode an audio file to 16kHz mono PCM float samples.
@@ -30,6 +33,9 @@ object AudioDecoder {
      */
     fun decode(file: File): FloatArray {
         AppLog.i(TAG, "Decoding audio file: ${file.name} (${file.length() / 1024} KB)")
+        require(file.length() in 1..MAX_SOURCE_BYTES) {
+            "Audio file must be between 1 byte and ${MAX_SOURCE_BYTES / 1024 / 1024} MB"
+        }
 
         // Fast path: parse WAV files directly without MediaExtractor
         // (MediaExtractor doesn't reliably support WAV on all Android versions)
@@ -54,6 +60,12 @@ object AudioDecoder {
             format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
         val inputChannels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
             format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+        if (format.containsKey(MediaFormat.KEY_DURATION)) {
+            val durationUs = format.getLong(MediaFormat.KEY_DURATION)
+            require(durationUs <= MAX_DURATION_SECONDS * 1_000_000L) {
+                "Audio is longer than the ${MAX_DURATION_SECONDS / 60}-minute Android limit"
+            }
+        }
 
         AppLog.i(TAG, "Audio track: mime=$mime, sampleRate=$inputSampleRate, channels=$inputChannels")
 
@@ -104,6 +116,7 @@ object AudioDecoder {
                         val chunk = extractPcmShorts(outputBuffer, bufferInfo)
                         pcmChunks.add(chunk)
                         totalSamples += chunk.size
+                        ensureWithinDuration(totalSamples, actualSampleRate, actualChannels)
                     }
                     codec.releaseOutputBuffer(outputIndex, false)
 
@@ -173,6 +186,11 @@ object AudioDecoder {
             shortBuffer.get(shorts)
             chunks.add(shorts)
             total += shorts.size
+            val sampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE))
+                format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
+            val channels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
+                format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+            ensureWithinDuration(total, sampleRate, channels)
             extractor.advance()
         }
 
@@ -194,6 +212,8 @@ object AudioDecoder {
         sampleRate: Int,
         channels: Int,
     ): FloatArray {
+        require(sampleRate > 0 && channels > 0) { "Invalid audio format" }
+        ensureWithinDuration(samples.size, sampleRate, channels)
         // Step 1: Mix to mono if multi-channel
         val mono = if (channels > 1) {
             val monoLength = samples.size / channels
@@ -213,6 +233,9 @@ object AudioDecoder {
 
         val ratio = TARGET_SAMPLE_RATE.toDouble() / sampleRate
         val newLength = (mono.size * ratio).toInt()
+        require(newLength <= MAX_DURATION_SECONDS * TARGET_SAMPLE_RATE) {
+            "Audio is longer than the ${MAX_DURATION_SECONDS / 60}-minute Android limit"
+        }
         val resampled = FloatArray(newLength)
 
         for (i in 0 until newLength) {
@@ -228,6 +251,14 @@ object AudioDecoder {
 
         AppLog.i(TAG, "Resampled: ${sampleRate}Hz → ${TARGET_SAMPLE_RATE}Hz, ${mono.size} → ${resampled.size} samples")
         return resampled
+    }
+
+    private fun ensureWithinDuration(sampleCount: Int, sampleRate: Int, channels: Int) {
+        require(sampleRate > 0 && channels > 0) { "Invalid audio format" }
+        val maxSamples = MAX_DURATION_SECONDS.toLong() * sampleRate * channels
+        require(sampleCount.toLong() <= maxSamples) {
+            "Audio is longer than the ${MAX_DURATION_SECONDS / 60}-minute Android limit"
+        }
     }
 
     /**
@@ -248,69 +279,56 @@ object AudioDecoder {
      * Parses the RIFF/WAV header, extracts PCM data, resamples to 16kHz mono.
      */
     private fun decodeWavDirect(file: File): FloatArray {
-        val bytes = file.readBytes()
-
-        // Parse WAV header
-        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-
-        // Skip RIFF header (4 bytes "RIFF" + 4 bytes size + 4 bytes "WAVE")
-        bb.position(12)
-
         var sampleRate = 16000
         var channels = 1
         var bitsPerSample = 16
-        var dataOffset = 0
-        var dataSize = 0
+        var dataOffset = 0L
+        var dataSize = 0L
 
-        // Read chunks until we find "fmt " and "data"
-        while (bb.position() < bytes.size - 8) {
-            val chunkId = ByteArray(4)
-            bb.get(chunkId)
-            val chunkSize = bb.int
-            val chunkName = String(chunkId)
+        RandomAccessFile(file, "r").use { input ->
+            require(input.length() >= 44) { "Invalid WAV file" }
+            input.seek(12)
+            while (input.filePointer + 8 <= input.length()) {
+                val chunkId = ByteArray(4)
+                input.readFully(chunkId)
+                val chunkSize = Integer.toUnsignedLong(Integer.reverseBytes(input.readInt()))
+                val chunkStart = input.filePointer
+                require(chunkStart + chunkSize <= input.length()) { "Invalid WAV chunk size" }
 
-            when (chunkName) {
-                "fmt " -> {
-                    val audioFormat = bb.short  // 1 = PCM
-                    channels = bb.short.toInt()
-                    sampleRate = bb.int
-                    bb.int  // byte rate
-                    bb.short  // block align
-                    bitsPerSample = bb.short.toInt()
-                    // Skip any extra fmt bytes
-                    val remaining = chunkSize - 16
-                    if (remaining > 0) bb.position(bb.position() + remaining)
+                when (String(chunkId, Charsets.US_ASCII)) {
+                    "fmt " -> {
+                        require(chunkSize >= 16) { "Invalid WAV format chunk" }
+                        val audioFormat = java.lang.Short.toUnsignedInt(java.lang.Short.reverseBytes(input.readShort()))
+                        require(audioFormat == 1) { "Unsupported WAV encoding: $audioFormat" }
+                        channels = java.lang.Short.toUnsignedInt(java.lang.Short.reverseBytes(input.readShort()))
+                        sampleRate = Integer.reverseBytes(input.readInt())
+                        input.skipBytes(6) // byte rate + block align
+                        bitsPerSample = java.lang.Short.toUnsignedInt(java.lang.Short.reverseBytes(input.readShort()))
+                    }
+                    "data" -> {
+                        dataOffset = chunkStart
+                        dataSize = chunkSize
+                    }
                 }
-                "data" -> {
-                    dataOffset = bb.position()
-                    dataSize = chunkSize
-                    break  // Found data chunk
-                }
-                else -> {
-                    // Skip unknown chunk (RIFF spec: odd-sized chunks are padded to even boundary)
-                    bb.position(bb.position() + chunkSize + (chunkSize % 2))
-                }
+                if (dataOffset > 0L) break
+                input.seek(chunkStart + chunkSize + (chunkSize % 2))
             }
-        }
 
-        if (dataOffset == 0 || dataSize == 0) {
-            throw IllegalArgumentException("Invalid WAV file — no data chunk found")
-        }
-        if (bitsPerSample != 16) {
-            throw IllegalArgumentException("Unsupported WAV format: ${bitsPerSample}-bit samples (only 16-bit PCM supported)")
-        }
+            require(dataOffset > 0L && dataSize > 0L) { "Invalid WAV file — no data chunk found" }
+            require(bitsPerSample == 16) {
+                "Unsupported WAV format: ${bitsPerSample}-bit samples (only 16-bit PCM supported)"
+            }
+            val numSamples = dataSize / 2L
+            require(numSamples <= Int.MAX_VALUE) { "WAV file is too large" }
+            ensureWithinDuration(numSamples.toInt(), sampleRate, channels)
 
-        AppLog.i(TAG, "WAV: ${sampleRate}Hz, ${channels}ch, ${bitsPerSample}bit, ${dataSize} bytes PCM")
-
-        // Extract PCM samples as ShortArray
-        val numSamples = dataSize / (bitsPerSample / 8)
-        val samples = ShortArray(numSamples)
-        bb.position(dataOffset)
-        for (i in 0 until numSamples) {
-            if (bb.remaining() < 2) break
-            samples[i] = bb.short
+            AppLog.i(TAG, "WAV: ${sampleRate}Hz, ${channels}ch, ${bitsPerSample}bit, ${dataSize} bytes PCM")
+            val samples = ShortArray(numSamples.toInt())
+            input.seek(dataOffset)
+            for (index in samples.indices) {
+                samples[index] = java.lang.Short.reverseBytes(input.readShort())
+            }
+            return resampleAndMix(samples, sampleRate, channels)
         }
-
-        return resampleAndMix(samples, sampleRate, channels)
     }
 }

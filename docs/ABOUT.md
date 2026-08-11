@@ -1,65 +1,53 @@
-# About This Documentation
+# Documentation Map
 
-This project uses **Arnold** for documentation-first development. The `docs/` folder is the source of truth for what this project should be and how it should behave.
+The current documentation distinguishes verified implementation, active plans,
+open decisions, historical references, and archived designs.
 
-## How Docs Are Organized
+## Current source of truth
 
-Docs are organized by **feature**, not by document type:
+- [overview.md](overview.md) — what the product and platform surfaces are now
+- [status.md](status.md) — verified feature/build/test status
+- [unknowns.md](unknowns.md) — unresolved product, model, platform, and brand
+  decisions
+- [PHASE_ZERO_MODERNIZATION_PLAN.md](PHASE_ZERO_MODERNIZATION_PLAN.md) — active
+  modernization sequence and exit criteria
+- [TECH_DEBT_AND_MODERNIZATION_AUDIT.md](TECH_DEBT_AND_MODERNIZATION_AUDIT.md) —
+  detailed audit evidence and research
+- feature folders — current behavior, flows, and edge cases where still aligned
+- `decisions/` — historical architectural decisions; accepted status does not
+  prove the implementation still matches the decision
 
-```
-docs/
-├── overview.md              Project vision and goals
-├── status.md                Feature statuses and check history
-├── ABOUT.md                 This file
-├── [feature]/[feature]-overview.md    Rules, assumptions, status per feature
-├── [feature]/[flow].md      Step-by-step user flows
-├── decisions/NNN-title.md   Why we chose what we chose
-└── unknowns.md              Open questions and bets
-```
+## Reference and archive material
 
-## Status Markers
+`docs/_reference/` contains older architecture, roadmap, setup, and planning
+material that may still be useful as engineering context. It is not current
+product truth unless a current document links to a specific verified section.
 
-- 🟢 Implemented — working, documented, aligned
-- 🟡 In Progress — partially built or partially documented
-- 🔵 Not Started — documented but no code yet
-- 🔴 Drifted — docs and code don't match
-- ❓ Unknown — depends on an unresolved question
+`docs/_archive/` contains superseded approaches and remains historical only.
 
-## Source Provenance
+The 2026 modernization audit found material drift in both areas, including
+model identity, model size, PWA, Android build, voice/language, and streaming
+claims. Do not copy claims from reference/archive documents into public copy
+without rechecking the current code and upstream source.
 
-Rules are tagged with where they came from:
+## Status markers
 
-- **(spec-stated)** — explicitly in the v3.0 expansion spec
-- **(code-derived)** — extracted from reading the existing codebase
-- **(user-stated)** — the human explicitly said this
-- **(decided)** — deliberate choice, links to decision record
-- **(Arnold-inferred)** — Claude reasoned this should exist
+- 🟢 Verified — current evidence supports the claim
+- 🟡 Working with debt — implemented but incomplete, unverified, or drifted in
+  important ways
+- 🔴 Blocked/drifted — visible claim or workflow is materially wrong or broken
+- 🔵 Planned — no implementation claim
+- ❓ Open decision — outcome depends on explicit product or technical choice
 
-## Arnold Commands
+## Documentation rules
 
-- `/arnold:check` — compare docs to code, find drift
-- `/arnold:update` — sync docs after coding
-- `/arnold:plan` — flesh out thin docs (flows, edge cases)
-- `/arnold:status` — quick project overview
-- `/arnold:decide` — record a decision
-- `/arnold:resolve` — fix drift items
-- `/arnold:recap` — start-of-session briefing
-
-## Pre-Arnold Reference Docs
-
-Pre-Arnold docs that are still accurate and useful live in `docs/_reference/`:
-
-- `EXPANSION-PLAN-OPEN-MOBILE-VOICE.md` — v3.0 spec (canonical)
-- `technical-architecture.md` — v2.0 system architecture
-- `ANDROID_ARCHITECTURE.md` — Android WebView bridge details
-- `HOW_IT_WORKS.md` — v2.0 user-facing explanation
-- `ROADMAP.md` — version history and multi-language plans
-- `LIMITS_AND_CONSTRAINTS.md` — performance and resource limits
-- `SETUP_GUIDE.md`, `QUICK_REFERENCE.md` — user guides
-- `SECURITY_CHECKLIST.md` — deployment security notes
-- `CHANGELOG.md` — version history
-- `testing-summary.md` — test coverage and results
-
-## Archived Docs
-
-Stale docs that described superseded architecture (Capacitor, Jetpack Compose, old doc structure) live in `docs/_archive/`. Each has an archive header noting it is for historical reference only.
+1. State the exact platform/runtime/model being described.
+2. Separate source/build, package, emulator, physical install, preservation,
+   runtime, and hands-on acceptance evidence.
+3. Do not label planned architecture as implemented.
+4. Record model family, version, precision, language, size, source, and license.
+5. Keep public README claims narrower than the strongest current evidence.
+6. Link stale material through a current warning rather than presenting it as
+   canonical.
+7. Update overview, status, unknowns, and the active plan whenever a major
+   implementation decision changes.

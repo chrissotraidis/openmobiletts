@@ -1,6 +1,7 @@
 package com.openmobiletts.app
 
-import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -17,18 +18,32 @@ object WavEncoder {
      * @return Complete WAV file as ByteArray
      */
     fun encode(samples: FloatArray, sampleRate: Int = TtsManager.SAMPLE_RATE): ByteArray {
+        val pcm = encodePcm(samples)
+        return header(pcm.size.toLong(), sampleRate) + pcm
+    }
+
+    fun encodePcm(samples: FloatArray): ByteArray {
+        val buffer = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+        for (sample in samples) {
+            val clamped = sample.coerceIn(-1.0f, 1.0f)
+            buffer.putShort((clamped * 32767.0f).toInt().toShort())
+        }
+        return buffer.array()
+    }
+
+    fun header(dataSize: Long, sampleRate: Int = TtsManager.SAMPLE_RATE): ByteArray {
+        require(dataSize in 0..Int.MAX_VALUE.toLong()) { "WAV data is too large" }
         val numChannels = 1
         val bitsPerSample = 16
         val byteRate = sampleRate * numChannels * bitsPerSample / 8
         val blockAlign = numChannels * bitsPerSample / 8
-        val dataSize = samples.size * blockAlign
-        val fileSize = 36 + dataSize  // 44-byte header minus 8 for RIFF header
+        val fileSize = 36L + dataSize
 
-        val buffer = ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN)
+        val buffer = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
 
         // RIFF header
         buffer.put("RIFF".toByteArray())
-        buffer.putInt(fileSize)
+        buffer.putInt(fileSize.toInt())
         buffer.put("WAVE".toByteArray())
 
         // fmt sub-chunk
@@ -43,15 +58,16 @@ object WavEncoder {
 
         // data sub-chunk
         buffer.put("data".toByteArray())
-        buffer.putInt(dataSize)
-
-        // Convert float samples to 16-bit PCM
-        for (sample in samples) {
-            val clamped = sample.coerceIn(-1.0f, 1.0f)
-            val pcm16 = (clamped * 32767.0f).toInt().toShort()
-            buffer.putShort(pcm16)
-        }
+        buffer.putInt(dataSize.toInt())
 
         return buffer.array()
+    }
+
+    fun patchHeader(file: File, dataSize: Long, sampleRate: Int = TtsManager.SAMPLE_RATE) {
+        val replacement = header(dataSize, sampleRate)
+        RandomAccessFile(file, "rw").use { output ->
+            output.seek(0)
+            output.write(replacement)
+        }
     }
 }

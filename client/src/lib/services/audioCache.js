@@ -31,8 +31,8 @@ async function initDB() {
 			resolve(db);
 		};
 
-		request.onupgradeneeded = (event) => {
-			const database = event.target.result;
+		request.onupgradeneeded = () => {
+			const database = request.result;
 			if (!database.objectStoreNames.contains(STORE_NAME)) {
 				const store = database.createObjectStore(STORE_NAME, { keyPath: 'id' });
 				store.createIndex('createdAt', 'createdAt', { unique: false });
@@ -164,6 +164,52 @@ export async function removeCachedAudio(historyId) {
 	} catch (err) {
 		console.warn('Failed to remove cached audio:', err);
 		return false;
+	}
+}
+
+/** Remove several cached audio records in one transaction. */
+export async function removeCachedAudioMany(historyIds) {
+	if (!Array.isArray(historyIds) || historyIds.length === 0) return true;
+	try {
+		const database = await initDB();
+		await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readwrite');
+			const store = transaction.objectStore(STORE_NAME);
+			for (const id of historyIds) store.delete(id);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = () => reject(transaction.error);
+			transaction.onabort = () => reject(transaction.error || new Error('Transaction aborted'));
+		});
+		return true;
+	} catch (err) {
+		console.warn('Failed to remove cached audio records:', err);
+		return false;
+	}
+}
+
+/** Return lightweight cache usage without loading audio blobs into app memory. */
+export async function getAudioCacheStats() {
+	try {
+		const database = await initDB();
+		return await new Promise((resolve, reject) => {
+			const transaction = database.transaction([STORE_NAME], 'readonly');
+			const store = transaction.objectStore(STORE_NAME);
+			let entries = 0;
+			let bytes = 0;
+			const request = store.openCursor();
+			request.onsuccess = () => {
+				const cursor = request.result;
+				if (!cursor) return;
+				entries += 1;
+				bytes += Number(cursor.value.size) || 0;
+				cursor.continue();
+			};
+			transaction.oncomplete = () => resolve({ entries, bytes, available: true });
+			transaction.onerror = () => reject(transaction.error);
+		});
+	} catch (err) {
+		console.warn('Failed to read audio cache usage:', err);
+		return { entries: 0, bytes: 0, available: false };
 	}
 }
 

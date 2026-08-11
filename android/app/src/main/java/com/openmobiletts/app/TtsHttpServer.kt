@@ -1,6 +1,7 @@
 package com.openmobiletts.app
 
 import android.content.Context
+import androidx.work.WorkInfo
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -34,10 +35,8 @@ class TtsHttpServer(
 
     /** Active and recently completed generation jobs. */
     private val jobs = ConcurrentHashMap<String, TtsJob>()
-
-    /** Tracks whether an STT model download is in progress. */
-    private val _sttDownloadInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
-    val sttDownloadInProgress: Boolean get() = _sttDownloadInProgress.get()
+    private val modelCatalog = ModelCatalog.load(context)
+    private val modelDownloader = ModelDownloader(context)
 
     init {
         // Clean up leftover job files from previous sessions
@@ -55,10 +54,17 @@ class TtsHttpServer(
         return try {
             when {
                 uri == "/api/voices" -> handleVoices()
+                uri == "/api/capabilities" -> handleCapabilities()
+                uri == "/api/models/catalog" -> handleModelCatalog()
                 uri == "/api/health" -> handleHealth()
                 uri == "/api/engines" -> handleEngines()
                 uri == "/api/engine" -> handleEngine()
                 uri == "/api/engine/switch" && method == Method.POST -> handleEngineSwitch(session)
+                uri == "/api/tts/models" -> handleTtsModels()
+                uri == "/api/tts/models/download" && method == Method.POST -> handleTtsModelDownload(session)
+                uri == "/api/tts/models/download/cancel" && method == Method.POST -> handleTtsModelDownloadCancel(session)
+                uri == "/api/tts/models/activate" && method == Method.POST -> handleTtsModelActivate(session)
+                uri.startsWith("/api/tts/models/") && method == Method.DELETE -> handleTtsModelDelete(uri)
                 uri == "/api/tts/stream" && method == Method.POST -> handleTtsStream(session)
                 uri.startsWith("/api/tts/jobs/") -> handleJobRequest(session, uri)
                 uri == "/api/logs/clear" && method == Method.POST -> handleLogsClear()
@@ -67,6 +73,7 @@ class TtsHttpServer(
                 uri == "/api/stt/transcribe" && method == Method.POST -> handleSttTranscribe(session)
                 uri == "/api/stt/models" -> handleSttModels()
                 uri == "/api/stt/models/download" && method == Method.POST -> handleSttModelDownload()
+                uri == "/api/stt/models/download/cancel" && method == Method.POST -> handleSttModelDownloadCancel()
                 uri == "/api/export/pdf" && method == Method.POST -> handleExport(session, "pdf")
                 uri == "/api/export/md" && method == Method.POST -> handleExport(session, "md")
                 uri == "/api/export/txt" && method == Method.POST -> handleExport(session, "txt")
@@ -77,6 +84,11 @@ class TtsHttpServer(
                 uri.matches(Regex("/api/projects/[^/]+")) && method == Method.GET -> handleProjectGet(uri)
                 uri.matches(Regex("/api/projects/[^/]+")) && method == Method.PUT -> handleProjectUpdate(session, uri)
                 uri.matches(Regex("/api/projects/[^/]+")) && method == Method.DELETE -> handleProjectDelete(uri)
+                uri.startsWith("/api/") -> newFixedLengthResponse(
+                    Response.Status.NOT_FOUND,
+                    MIME_JSON,
+                    """{"detail":"Not found"}""",
+                )
                 else -> serveStaticAsset(uri)
             }
         } catch (e: Exception) {
@@ -92,34 +104,228 @@ class TtsHttpServer(
     // ---------- API endpoints ----------
 
     private fun handleVoices(): Response {
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, VoiceRegistry.toJsonArray())
-    }
-
-    private fun handleHealth(): Response {
+        val activeModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
         return newFixedLengthResponse(
-            Response.Status.OK, MIME_JSON,
-            """{"status":"healthy","version":"3.0.0","engine":"sherpa-onnx"}"""
+            Response.Status.OK,
+            MIME_JSON,
+            VoiceRegistry.toJsonArray(activeModelId),
         )
     }
 
+    private fun handleCapabilities(): Response {
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            MIME_JSON,
+            AppMetadata.CAPABILITIES_JSON,
+        )
+    }
+
+    private fun handleModelCatalog(): Response = newFixedLengthResponse(
+        Response.Status.OK,
+        MIME_JSON,
+        modelCatalog.rawJson,
+    )
+
+    private fun handleHealth(): Response {
+        val appVersion = context.packageManager
+            .getPackageInfo(context.packageName, 0)
+            .versionName ?: "unknown"
+        val response = JSONObject().apply {
+            put("status", "healthy")
+            put("name", AppMetadata.APP_NAME)
+            put("version", appVersion)
+            put("engine", "sherpa-onnx")
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
+    }
+
     private fun handleEngines(): Response {
-        val json = """[{"name":"sherpa-onnx","label":"Sherpa-ONNX (On-Device)","available":true,"active":true}]"""
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
+        val activeModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
+        val engines = JSONArray()
+        for (spec in modelDownloader.ttsModels) {
+            engines.put(JSONObject().apply {
+                put("name", spec.modelId)
+                put("label", spec.label + if (spec.status == "experimental") " (Experimental)" else "")
+                put("available", modelDownloader.isTtsModelDownloaded(context.filesDir, spec.modelId))
+                put("active", spec.modelId == activeModelId)
+            })
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, engines.toString())
     }
 
     private fun handleEngine(): Response {
         return newFixedLengthResponse(
             Response.Status.OK, MIME_JSON,
-            """{"engine":"sherpa-onnx"}"""
+            JSONObject().apply {
+                put("engine", ttsManager.activeModelId ?: TtsModelSelection.activeModelId(context, modelDownloader))
+            }.toString()
         )
     }
 
     private fun handleEngineSwitch(session: IHTTPSession): Response {
+        return activateTtsModel(readModelId(session, "engine"))
+    }
+
+    private fun handleTtsModels(): Response {
+        val activeModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
+        val models = JSONArray()
+        for (spec in modelDownloader.ttsModels) {
+            val workModel = DownloadModel.forTtsModelId(spec.modelId)
+            val work = workModel?.let { ModelDownloadWork.info(context, it) }
+            val downloading = work?.state in setOf(
+                WorkInfo.State.ENQUEUED,
+                WorkInfo.State.BLOCKED,
+                WorkInfo.State.RUNNING,
+            )
+            val progress = if (work?.state == WorkInfo.State.SUCCEEDED) work.outputData else work?.progress
+            val downloadedBytes = progress?.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L) ?: 0L
+            val totalBytes = progress?.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, spec.archiveBytes)
+                ?: spec.archiveBytes
+            val error = if (work?.state == WorkInfo.State.FAILED) {
+                work.outputData.getString(ModelDownloadWorker.KEY_ERROR) ?: "Model installation failed"
+            } else {
+                null
+            }
+            val installed = modelDownloader.isTtsModelDownloaded(context.filesDir, spec.modelId)
+            val active = installed && spec.modelId == activeModelId
+
+            models.put(JSONObject().apply {
+                put("id", spec.modelId)
+                put("name", spec.modelId)
+                put("label", spec.label)
+                put("family", spec.family)
+                put("version", spec.version)
+                put("precision", spec.precision)
+                put("tier", spec.status)
+                put("experimental", spec.status == "experimental")
+                put("languages", JSONArray(spec.exposedLanguages))
+                put("archive_size_mb", spec.archiveSizeMb)
+                put("installed_size_mb", spec.installedSizeMb)
+                put("runtime", spec.runtime)
+                put("weights_license", spec.weightsLicense)
+                put("downloaded", installed)
+                put("active", active)
+                put("downloading", downloading)
+                put("downloaded_bytes", downloadedBytes)
+                put("total_bytes", totalBytes)
+                put(
+                    "progress_percent",
+                    if (downloading && totalBytes > 0L) {
+                        (downloadedBytes.toDouble() / totalBytes * 100.0).coerceIn(0.0, 100.0)
+                    } else {
+                        JSONObject.NULL
+                    },
+                )
+                put("error", error ?: JSONObject.NULL)
+                put("removable", spec.status == "experimental" && installed && !active)
+                put("status", when {
+                    active -> "ready"
+                    downloading -> "downloading"
+                    installed -> "installed"
+                    error != null -> "error"
+                    else -> "not_installed"
+                })
+            })
+        }
         return newFixedLengthResponse(
-            Response.Status.OK, MIME_JSON,
-            """{"engine":"sherpa-onnx","voices":${VoiceRegistry.voices.size}}"""
+            Response.Status.OK,
+            MIME_JSON,
+            JSONObject().put("models", models).put("active_model", activeModelId).toString(),
         )
     }
+
+    private fun handleTtsModelDownload(session: IHTTPSession): Response {
+        val modelId = readModelId(session)
+        val spec = runCatching { modelDownloader.ttsModel(modelId) }.getOrNull()
+            ?: return modelError("Unknown Android voice model")
+        if (modelDownloader.isTtsModelDownloaded(context.filesDir, modelId)) {
+            return jsonOk(JSONObject().put("status", "already_downloaded").put("model", modelId))
+        }
+        val workModel = DownloadModel.forTtsModelId(modelId)
+            ?: return modelError("Voice model does not have a download worker")
+        val current = ModelDownloadWork.info(context, workModel)
+        if (current?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED, WorkInfo.State.RUNNING)) {
+            return jsonOk(JSONObject().put("status", "downloading").put("model", modelId))
+        }
+        ModelDownloadWork.enqueue(context, workModel)
+        AppLog.i(TAG, "Queued ${spec.label} download from Models settings")
+        return jsonOk(JSONObject().put("status", "downloading").put("model", modelId))
+    }
+
+    private fun handleTtsModelDownloadCancel(session: IHTTPSession): Response {
+        val modelId = readModelId(session)
+        val workModel = DownloadModel.forTtsModelId(modelId)
+            ?: return modelError("Unknown Android voice model")
+        ModelDownloadWork.cancel(context, workModel)
+        return jsonOk(JSONObject().put("status", "cancelled").put("model", modelId))
+    }
+
+    private fun handleTtsModelActivate(session: IHTTPSession): Response =
+        activateTtsModel(readModelId(session))
+
+    private fun activateTtsModel(modelId: String): Response {
+        val spec = runCatching { modelDownloader.ttsModel(modelId) }.getOrNull()
+            ?: return modelError("Unknown Android voice model")
+        if (!modelDownloader.isTtsModelDownloaded(context.filesDir, modelId)) {
+            return modelError("Download ${spec.label} before activating it")
+        }
+        val currentModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
+        return try {
+            TtsModelSelection.save(context, modelId)
+            val restartRequired = currentModelId != modelId
+            AppLog.i(
+                TAG,
+                "Selected TTS model: $modelId (restart required=$restartRequired)",
+            )
+            jsonOk(
+                JSONObject()
+                    .put("engine", modelId)
+                    .put("model", modelId)
+                    .put("voices", VoiceRegistry.voicesFor(modelId).size)
+                    .put("restart_required", restartRequired),
+            )
+        } catch (error: Exception) {
+            AppLog.e(TAG, "Failed to select TTS model $modelId", error)
+            modelError(error.message ?: "Voice model could not be selected")
+        }
+    }
+
+    private fun handleTtsModelDelete(uri: String): Response {
+        val modelId = uri.removePrefix("/api/tts/models/")
+        val activeModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
+        if (modelId == activeModelId) return modelError("Switch models before removing the active model")
+        return try {
+            check(modelDownloader.removeExperimentalTtsModel(context.filesDir, modelId)) {
+                "The model files could not be removed"
+            }
+            jsonOk(JSONObject().put("status", "removed").put("model", modelId))
+        } catch (error: Exception) {
+            modelError(error.message ?: "Voice model could not be removed")
+        }
+    }
+
+    private fun readModelId(session: IHTTPSession, key: String = "model"): String {
+        val maxBody = 64 * 1024
+        val contentLength = (session.headers["content-length"]?.toIntOrNull() ?: 0).coerceAtMost(maxBody)
+        if (contentLength <= 0) return ""
+        val bytes = ByteArray(contentLength)
+        DataInputStream(session.inputStream).readFully(bytes)
+        return JSONObject(String(bytes)).optString(key, "").trim()
+    }
+
+    private fun jsonOk(body: JSONObject): Response =
+        newFixedLengthResponse(Response.Status.OK, MIME_JSON, body.toString())
+
+    private fun modelError(message: String): Response = newFixedLengthResponse(
+        Response.Status.BAD_REQUEST,
+        MIME_JSON,
+        JSONObject().put("detail", message).toString(),
+    )
 
     private fun handleLogs(): Response {
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, AppLog.exportJson())
@@ -184,7 +390,7 @@ class TtsHttpServer(
     // ---------- STT endpoints ----------
 
     /**
-     * Transcribe uploaded audio to text via Moonshine v2.
+     * Transcribe uploaded audio with Moonshine v1 Base English INT8.
      * Accepts audio as multipart file upload (WAV/PCM).
      * Returns JSON with transcribed text.
      */
@@ -198,7 +404,7 @@ class TtsHttpServer(
         // Lazy-init STT engine on first transcription request (mirrors TTS pattern)
         try {
             if (!mgr.isInitialized) {
-                val modelDir = ModelDownloader().getSttModelDir(context.filesDir)
+                val modelDir = modelDownloader.getSttModelDir(context.filesDir)
                 AppLog.i(TAG, "Initializing STT engine from: $modelDir")
 
                 val preprocessFile = File("$modelDir/preprocess.onnx")
@@ -263,7 +469,7 @@ class TtsHttpServer(
             val response = JSONObject().apply {
                 put("text", text)
                 put("duration_ms", durationMs)
-                put("model", "moonshine-v2-medium")
+                put("model", modelDownloader.sttModel.modelId)
             }
 
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
@@ -282,16 +488,61 @@ class TtsHttpServer(
      * List available STT models and their download status.
      */
     private fun handleSttModels(): Response {
-        val downloader = ModelDownloader()
+        val downloader = modelDownloader
+        val spec = downloader.sttModel
         val destDir = context.filesDir
+        val work = ModelDownloadWork.info(context, DownloadModel.STT)
+        val downloading = work?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED, WorkInfo.State.RUNNING)
+        val progress = if (work?.state == WorkInfo.State.SUCCEEDED) work.outputData else work?.progress
+        val downloadedBytes = progress?.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L) ?: 0L
+        val totalBytes = progress?.getLong(
+            ModelDownloadWorker.KEY_TOTAL_BYTES,
+            spec.archiveBytes,
+        ) ?: spec.archiveBytes
+        val downloadError = if (work?.state == WorkInfo.State.FAILED) {
+            work.outputData.getString(ModelDownloadWorker.KEY_ERROR) ?: "STT model download failed"
+        } else {
+            null
+        }
 
         val models = JSONArray().apply {
             put(JSONObject().apply {
-                put("name", "moonshine-v2-medium")
-                put("size_mb", 250)
+                put("id", spec.modelId)
+                put("name", spec.modelId)
+                put("label", spec.label)
+                put("family", spec.family)
+                put("version", spec.version)
+                put("precision", spec.precision)
+                put("languages", JSONArray(spec.exposedLanguages))
+                put("archive_size_mb", spec.archiveSizeMb)
+                put("installed_size_mb", spec.installedSizeMb)
+                put("size_mb", spec.archiveSizeMb)
+                put("runtime", spec.runtime)
+                put("minimum_runtime_version", spec.minimumRuntimeVersion)
+                put("source_url", spec.sourceUrl)
+                put("weights_license", spec.weightsLicense)
                 put("downloaded", downloader.isSttModelDownloaded(destDir))
                 put("active", sttManager?.isInitialized == true)
-                put("downloading", sttDownloadInProgress)
+                put("downloading", downloading)
+                put("downloaded_bytes", downloadedBytes)
+                put("total_bytes", totalBytes)
+                if (downloading && totalBytes > 0) {
+                    put(
+                        "progress_percent",
+                        (downloadedBytes.toDouble() / totalBytes * 100.0)
+                            .coerceIn(0.0, 100.0),
+                    )
+                } else {
+                    put("progress_percent", JSONObject.NULL)
+                }
+                put("error", downloadError ?: JSONObject.NULL)
+                put("status", when {
+                    sttManager?.isInitialized == true -> "ready"
+                    downloading -> "downloading"
+                    downloader.isSttModelDownloaded(destDir) -> "installed"
+                    downloadError != null -> "error"
+                    else -> "not_installed"
+                })
             })
         }
 
@@ -307,7 +558,7 @@ class TtsHttpServer(
      * Returns immediately with status — download continues asynchronously.
      */
     private fun handleSttModelDownload(): Response {
-        val downloader = ModelDownloader()
+        val downloader = modelDownloader
         val destDir = context.filesDir
 
         if (downloader.isSttModelDownloaded(destDir)) {
@@ -317,44 +568,29 @@ class TtsHttpServer(
             )
         }
 
-        // Atomic check-and-set to prevent concurrent downloads
-        if (!_sttDownloadInProgress.compareAndSet(false, true)) {
+        val current = ModelDownloadWork.info(context, DownloadModel.STT)
+        if (current?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED, WorkInfo.State.RUNNING)) {
             return newFixedLengthResponse(
                 Response.Status.OK, MIME_JSON,
                 """{"status":"downloading","message":"Download already in progress."}"""
             )
         }
 
-        // Start download in background thread
-        Thread {
-            try {
-                AppLog.i(TAG, "Starting STT model download from Settings...")
-                kotlinx.coroutines.runBlocking {
-                    downloader.downloadSttModel(destDir) { bytesRead, totalBytes ->
-                        val mb = bytesRead / 1024 / 1024
-                        AppLog.d(TAG, "STT download progress: ${mb}MB / ${totalBytes / 1024 / 1024}MB")
-                    }
-                }
-                AppLog.i(TAG, "STT model download complete")
-
-                // Initialize STT engine after download
-                if (sttManager != null && !sttManager!!.isInitialized) {
-                    val modelDir = downloader.getSttModelDir(destDir)
-                    kotlinx.coroutines.runBlocking {
-                        sttManager!!.init(modelDir)
-                    }
-                    AppLog.i(TAG, "STT engine initialized after download")
-                }
-            } catch (e: Exception) {
-                AppLog.e(TAG, "STT model download failed", e)
-            } finally {
-                _sttDownloadInProgress.set(false)
-            }
-        }.start()
+        ModelDownloadWork.enqueue(context, DownloadModel.STT)
+        AppLog.i(TAG, "Queued durable STT model download from Settings")
 
         return newFixedLengthResponse(
             Response.Status.OK, MIME_JSON,
-            """{"status":"downloading","message":"Download started in background. Check /api/stt/models for status."}"""
+            """{"status":"downloading","message":"Download queued. Check /api/stt/models for status."}"""
+        )
+    }
+
+    private fun handleSttModelDownloadCancel(): Response {
+        ModelDownloadWork.cancel(context, DownloadModel.STT)
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            MIME_JSON,
+            """{"status":"cancelled","message":"Download paused and can be resumed later."}""",
         )
     }
 
@@ -565,7 +801,10 @@ class TtsHttpServer(
         val body = JSONObject(String(bodyBytes))
 
         val text = body.optString("text", "").trim()
-        val voiceName = body.optString("voice", "af_heart")
+        val activeModelId = ttsManager.activeModelId
+            ?: TtsModelSelection.activeModelId(context, modelDownloader)
+        val defaultVoice = VoiceRegistry.voicesFor(activeModelId).first().name
+        val voiceName = body.optString("voice", defaultVoice)
         val speed = body.optDouble("speed", 1.0).toFloat()
 
         if (text.isEmpty()) {
@@ -575,13 +814,14 @@ class TtsHttpServer(
             )
         }
 
-        val sid = VoiceRegistry.sidForName(voiceName) ?: 3
+        val sid = VoiceRegistry.sidForName(voiceName, activeModelId)
+            ?: VoiceRegistry.defaultSidFor(activeModelId)
         AppLog.i(TAG, "TTS request: voice=$voiceName (sid=$sid), speed=$speed, text_length=${text.length}")
 
         // Ensure TTS engine is initialized BEFORE starting the stream
         try {
             if (!ttsManager.isInitialized) {
-                val modelDir = ModelDownloader().getModelDir(context.filesDir)
+                val modelDir = modelDownloader.getTtsModelDir(context.filesDir, activeModelId)
                 AppLog.i(TAG, "Initializing TTS engine from: $modelDir")
 
                 val modelFile = File("$modelDir/model.onnx")
@@ -597,7 +837,7 @@ class TtsHttpServer(
                 }
 
                 runBlocking {
-                    ttsManager.init(modelDir)
+                    ttsManager.init(modelDir, activeModelId)
                 }
                 AppLog.i(TAG, "TTS engine initialized successfully")
             }
@@ -638,6 +878,8 @@ class TtsHttpServer(
                 audioOutputStream = FileOutputStream(job.audioFile)
                 var cumulativeTime = 0.0
                 var aacAvailable = true
+                var wavFallback = false
+                var wavPcmBytes = 0L
                 var streamAlive = true // False once streaming is abandoned
 
                 val jobStartTime = System.currentTimeMillis()
@@ -650,8 +892,7 @@ class TtsHttpServer(
                         break
                     }
 
-                    val preview = if (chunkText.length > 50) "${chunkText.take(50)}..." else chunkText
-                    AppLog.i(TAG, "Job $jobId: generating chunk $chunkIndex/${chunks.size}: '$preview'")
+                    AppLog.i(TAG, "Job $jobId: generating chunk $chunkIndex/${chunks.size}, characters=${chunkText.length}")
                     val chunkStartTime = System.currentTimeMillis()
                     val samples = runBlocking {
                         ttsManager.generate(text = chunkText, sid = sid, speed = speed)
@@ -666,26 +907,31 @@ class TtsHttpServer(
 
                     val duration = samples.size.toDouble() / TtsManager.SAMPLE_RATE
 
-                    // Encode as AAC (concatenatable ADTS frames) with WAV fallback.
-                    // WAV fallback is only safe on the first chunk — switching mid-stream
-                    // would produce a corrupt file (part AAC, part WAV).
+                    // Encode as AAC (concatenatable ADTS frames). If AAC is
+                    // unavailable before the first encoded chunk, switch the
+                    // disk-backed job to one header-patched WAV and let the
+                    // client recover it through the job endpoint.
                     val audioBytes: ByteArray
                     if (aacAvailable) {
                         audioBytes = try {
                             AacEncoder.encode(samples)
                         } catch (e: Exception) {
-                            if (chunkIndex == 0) {
+                            if (job.completedChunks == 0) {
                                 AppLog.w(TAG, "Job $jobId: AAC encoding failed on first chunk, falling back to WAV: ${e.message}")
                                 aacAvailable = false
+                                wavFallback = true
                                 job.audioFormat = "audio/wav"
-                                WavEncoder.encode(samples)
+                                audioOutputStream.write(WavEncoder.header(0))
+                                streamAlive = false
+                                stream.finish()
+                                WavEncoder.encodePcm(samples)
                             } else {
                                 AppLog.e(TAG, "Job $jobId: AAC encoding failed mid-stream at chunk $chunkIndex, cannot switch format")
                                 throw e
                             }
                         }
                     } else {
-                        audioBytes = WavEncoder.encode(samples)
+                        audioBytes = WavEncoder.encodePcm(samples)
                     }
 
                     val timing = JSONObject().apply {
@@ -699,6 +945,7 @@ class TtsHttpServer(
                     // Always write to disk first (survives stream drops)
                     audioOutputStream.write(audioBytes)
                     audioOutputStream.flush()
+                    if (wavFallback) wavPcmBytes += audioBytes.size
 
                     // Record timing
                     job.timingEntries.add(timing)
@@ -737,6 +984,7 @@ class TtsHttpServer(
 
                 audioOutputStream.close()
                 audioOutputStream = null
+                if (wavFallback) WavEncoder.patchHeader(job.audioFile, wavPcmBytes)
 
                 // Write timing data to disk (snapshot under lock to avoid ConcurrentModificationException)
                 val timingSnapshot: List<JSONObject>

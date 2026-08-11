@@ -4,8 +4,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Static mapping of all 53 Kokoro voices.
- * Matches the Python server's sherpa_backend.py voice registry exactly.
+ * Product-accepted English voices from the 53-speaker Kokoro package.
+ * Speaker prefixes are not treated as proof of language support.
  */
 object VoiceRegistry {
 
@@ -21,13 +21,6 @@ object VoiceRegistry {
     private val LANG_MAP = mapOf(
         'a' to ("en-us" to "English (US)"),
         'b' to ("en-gb" to "English (UK)"),
-        'e' to ("es" to "Spanish"),
-        'f' to ("fr" to "French"),
-        'h' to ("hi" to "Hindi"),
-        'i' to ("it" to "Italian"),
-        'j' to ("ja" to "Japanese"),
-        'p' to ("pt-br" to "Portuguese"),
-        'z' to ("zh" to "Chinese"),
     )
 
     val voices: List<VoiceInfo> = listOf(
@@ -43,34 +36,33 @@ object VoiceRegistry {
         v("bf_alice", 20), v("bf_emma", 21), v("bf_isabella", 22), v("bf_lily", 23),
         // English UK — Male
         v("bm_daniel", 24), v("bm_fable", 25), v("bm_george", 26), v("bm_lewis", 27),
-        // Spanish
-        v("ef_dora", 28), v("em_alex", 29),
-        // French
-        v("ff_siwis", 30),
-        // Hindi
-        v("hf_alpha", 31), v("hf_beta", 32), v("hm_omega", 33), v("hm_psi", 34),
-        // Italian
-        v("if_sara", 35), v("im_nicola", 36),
-        // Japanese
-        v("jf_alpha", 37), v("jf_gongitsune", 38), v("jf_nezumi", 39), v("jf_tebukuro", 40),
-        v("jm_kumo", 41),
-        // Portuguese
-        v("pf_dora", 42), v("pm_alex", 43), v("pm_santa", 44),
-        // Chinese
-        v("zf_xiaobei", 45), v("zf_xiaoni", 46), v("zf_xiaoxiao", 47), v("zf_xiaoyi", 48),
-        v("zm_yunjian", 49), v("zm_yunxi", 50), v("zm_yunxia", 51), v("zm_yunyang", 52),
     )
 
-    private val byName = voices.associateBy { it.name }
+    private val kittenVoices: List<VoiceInfo> = listOf(
+        kitten("Bella", 1, "female"),
+        kitten("Jasper", 0, "male"),
+        kitten("Luna", 3, "female"),
+        kitten("Bruno", 2, "male"),
+        kitten("Rosie", 5, "female"),
+        kitten("Hugo", 4, "male"),
+        kitten("Kiki", 7, "female"),
+        kitten("Leo", 6, "male"),
+    )
 
-    fun sidForName(name: String): Int? = byName[name]?.sid
+    fun voicesFor(modelId: String): List<VoiceInfo> =
+        if (modelId.startsWith("kitten-")) kittenVoices else voices
+
+    fun sidForName(name: String, modelId: String): Int? =
+        voicesFor(modelId).firstOrNull { it.name == name }?.sid
+
+    fun defaultSidFor(modelId: String): Int = voicesFor(modelId).first().sid
 
     /**
      * Returns JSON array matching the /api/voices response format.
      */
-    fun toJsonArray(): String {
+    fun toJsonArray(modelId: String): String {
         val arr = JSONArray()
-        for (v in voices) {
+        for (v in voicesFor(modelId)) {
             arr.put(JSONObject().apply {
                 put("name", v.name)
                 put("language", v.language)
@@ -91,4 +83,13 @@ object VoiceRegistry {
         val gender = if (genderChar == 'f') "female" else "male"
         return VoiceInfo(name, sid, langCode, langName, gender, display)
     }
+
+    private fun kitten(name: String, sid: Int, gender: String) = VoiceInfo(
+        name = name,
+        sid = sid,
+        language = "en-us",
+        languageName = "English",
+        gender = gender,
+        displayName = name,
+    )
 }

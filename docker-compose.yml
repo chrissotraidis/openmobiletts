@@ -16,9 +16,9 @@ services:
       - DEFAULT_VOICE=af_heart
       - DEFAULT_SPEED=1.0
     volumes:
-      # Persist the Kokoro model cache so it survives container restarts
-      - kokoro-cache:/root/.cache/kokoro
+      # Persist the Hugging Face cache used by Kokoro-82M.
+      - huggingface-cache:/root/.cache/huggingface
     restart: unless-stopped
 
 volumes:
-  kokoro-cache:
+  huggingface-cache:

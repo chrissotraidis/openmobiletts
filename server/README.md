@@ -1,78 +1,141 @@
-# Open Mobile TTS - Server
+# Open Mobile TTS Python Server
 
-FastAPI-based streaming TTS server powered by Kokoro.
+FastAPI serves the shared Svelte build and local TTS/STT/document/project API.
+Most users should start from the repository root with `python3 run.py`; this
+file is for server development and model inspection.
 
-> **Most users should just run `python run.py` from the repo root.** This README is for server-only development.
+The root launcher creates and re-executes inside the repository-local `.venv`
+unless another virtual environment is already active. Direct server-development
+commands below assume you have activated an isolated environment yourself.
 
-## Standalone Development
+## Safety boundary
 
-```bash
-pip install -r requirements.txt
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+The code now binds `127.0.0.1` by default, limits CORS to local development
+origins, redacts content previews in logs, and still has no authentication:
+
+```sh
+uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### Prerequisites
-- Python 3.9-3.12
-- espeak-ng (`apt install espeak-ng` / `brew install espeak-ng`)
-- ffmpeg (`apt install ffmpeg` / `brew install ffmpeg`)
+Do not expose the current server to an untrusted LAN or the public internet.
+Secured LAN/remote mode requires authentication, TLS, origin restrictions, and
+resource limits.
 
-### Optional: Pre-download models
+## Requirements
 
-```bash
-python setup_models.py
+- Python 3.10-3.12 (Kokoro 0.9.4 requires Python 3.10+)
+- Node.js 18, 20, or 22+ for the shared client build; Node 21 is outside
+  Vite's supported engine range
+- espeak-ng
+- ffmpeg
+
+```sh
+python3 -m pip install --require-hashes -r requirements.lock
 ```
 
-Models are downloaded automatically on first request, but this script lets you cache them ahead of time (~320 MB to `~/.cache/kokoro/`).
+`requirements.txt` is the human-edited production input. `requirements.lock`
+is the universal Python 3.10+ production lock; `requirements-dev.lock` adds the
+test toolchain. Both locks include distribution hashes. Regenerate them with:
 
-## API Endpoints
-
-### TTS
-- `GET /api/tts/stream` — Stream TTS audio
-  - Query params: `text`, `voice` (optional), `speed` (optional)
-  - Returns: Streaming MP3 with timing metadata
-
-### Documents
-- `POST /api/documents/upload` — Upload PDF/DOCX/TXT, get extracted text
-- `POST /api/documents/stream` — Upload and stream TTS directly
-
-### Voices
-- `GET /api/voices` — List available voices
-
-### Health
-- `GET /api/health` — Health check
-
-## Project Structure
-
-```
-server/
-├── src/
-│   ├── main.py               # FastAPI app, route definitions
-│   ├── tts_engine.py         # Kokoro TTS wrapper with streaming
-│   ├── document_processor.py # PDF/DOCX/TXT text extraction
-│   ├── audio_encoder.py      # MP3 encoding with pydub
-│   ├── text_preprocessor.py  # Text cleaning and chunking
-│   └── config.py             # Environment configuration
-├── requirements.txt
-├── setup_models.py           # Pre-download Kokoro models
-└── .env.example              # Configuration reference
+```sh
+uv pip compile requirements.txt --universal --python-version 3.10 --generate-hashes --output-file requirements.lock
+uv pip compile requirements-dev.in --universal --python-version 3.10 --generate-hashes --output-file requirements-dev.lock
 ```
 
-## Configuration
+## Models
 
-All settings are optional and have sensible defaults. See `.env.example` for the full list.
+### Default TTS
 
-| Variable | Default | Description |
-|---|---|---|
-| `DEFAULT_VOICE` | `af_heart` | Default TTS voice |
-| `DEFAULT_SPEED` | `1.0` | Default speech speed |
-| `MAX_CHUNK_TOKENS` | `250` | Max tokens per TTS chunk |
-| `MP3_BITRATE` | `64k` | MP3 encoding bitrate |
-| `PORT` | `8000` | Server port |
+`hexgrad/Kokoro-82M` through the Python `kokoro` package. The cache is managed
+by Hugging Face, normally under `~/.cache/huggingface/`, not
+`~/.cache/kokoro/` as older scripts/docs claim.
 
-## Troubleshooting
+Optional pre-download/test:
 
-**"No module named 'espeak'"** — Install espeak-ng: `sudo apt install espeak-ng`
+```sh
+python3 setup_models.py
+```
 
-**Slow generation on CPU** — Expected. GPU gives 90-210x real-time; CPU gives 3-11x.
+### Optional sherpa-onnx TTS
 
-**"CUDA out of memory"** — Reduce `MAX_CHUNK_TOKENS` or close other GPU processes.
+`kokoro-multi-lang-v1_0`: 333.2 MiB archive and 382.2 MiB of measured files.
+The product exposes 28 accepted English US/UK speakers from the 53-speaker
+package:
+
+```sh
+python3 setup_sherpa_models.py
+TTS_ENGINE=sherpa-onnx uvicorn src.main:app --host 127.0.0.1 --port 8000
+```
+
+The setup script reads the shared catalog and performs exact-size/SHA-256,
+safe-path, required-file/directory, native-load, and non-empty-generation
+checks before activation.
+
+### STT
+
+The implemented recognizer is
+`sherpa-onnx-moonshine-base-en-int8`: Moonshine v1 Base English INT8. It is not
+Moonshine v2 Medium.
+
+Settings now uses `POST /api/stt/models/download`. The server downloads the
+pinned 239.2 MB archive in a background thread, reports byte progress, checks
+its exact size and SHA-256, rejects unsafe archive paths/links, verifies all
+required files, smoke-loads the model when sherpa-onnx is available, and
+activates it from a staging directory. The desktop installer is intentionally
+process-local; Android separately uses foreground WorkManager delivery with
+pause/resume. Desktop resume/cancellation and a complete cross-platform model
+manager remain future work.
+
+## Main API groups
+
+- `GET /api/health`
+- `GET /api/capabilities`
+- `GET /api/models/catalog`
+- `GET /api/voices`
+- `GET /api/engine` and `/api/engines`
+- `POST /api/engine/switch`
+- `POST /api/tts/stream`
+- `POST /api/documents/upload` and `/api/documents/stream`
+- `POST /api/stt/transcribe`
+- `/api/stt/batch*` job and download routes
+- `GET /api/stt/models`
+- `POST /api/stt/models/download`
+- `POST /api/export/pdf`, `/md`, and `/txt`
+- `/api/projects*`
+- `/api/logs*`
+
+The TTS endpoint uses POST with a framed binary response. FastAPI transfers
+chunks as they are produced, but the current browser client buffers the full
+audio Blob before playback, so product copy must not claim genuinely
+progressive playback yet.
+
+## Tests
+
+```sh
+python3 -m pytest -q
+```
+
+At the 2026-08-11 modernization checkpoint, all 58 server tests pass. A clean default
+launcher run installed the hashed production lock into `.venv`, started the
+server, and initialized real Kokoro voices. A real PDF export also passes from
+the isolated locked environment.
+Coverage does not yet prove real TTS/STT quality, all parsers, projects,
+resource limits, privacy/security, concurrent inference, or parity with Android
+NanoHTTPD.
+
+## Current technical debt
+
+- dependency updates still need deliberate lock regeneration and review;
+- hosted CI has been defined but not yet observed on GitHub;
+- the full Docker image check is pending because Docker Hub metadata requests
+  timed out during local verification;
+- incomplete cross-platform model-manager features (desktop resume/cancel and
+  repair/update/delete controls);
+- synchronous inference inside async request flow;
+- global mutable engine selection;
+- unbounded/ephemeral batch job management;
+- extension-first parser validation and inconsistent upload limits;
+- no authentication for deliberately enabled LAN mode.
+
+See [the Phase Zero plan](../docs/PHASE_ZERO_MODERNIZATION_PLAN.md) and
+[full audit](../docs/TECH_DEBT_AND_MODERNIZATION_AUDIT.md).

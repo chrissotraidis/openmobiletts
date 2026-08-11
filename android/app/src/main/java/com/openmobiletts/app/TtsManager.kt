@@ -2,8 +2,10 @@ package com.openmobiletts.app
 
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKittenModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +34,10 @@ class TtsManager {
     @Volatile
     private var tts: OfflineTts? = null
 
+    @Volatile
+    var activeModelId: String? = null
+        private set
+
     val isInitialized: Boolean
         get() = tts != null
 
@@ -40,12 +46,17 @@ class TtsManager {
      * Must be called from a coroutine (runs on IO dispatcher).
      * Uses a Mutex to prevent double-init from concurrent HTTP requests.
      */
-    suspend fun init(modelDir: String) {
+    suspend fun init(modelDir: String, modelId: String = ModelDownloader.DEFAULT_TTS_MODEL_ID) {
         initMutex.withLock {
-            if (tts != null) return  // Already initialized
+            if (tts != null) {
+                check(activeModelId == modelId) {
+                    "Changing the TTS model requires a clean app restart"
+                }
+                return
+            }
 
-            withContext(Dispatchers.IO) {
-                AppLog.i(TAG, "Initializing Sherpa-ONNX TTS from: $modelDir")
+            val candidate = withContext(Dispatchers.IO) {
+                AppLog.i(TAG, "Initializing Sherpa-ONNX TTS model $modelId from: $modelDir")
 
                 // Build lexicon paths — multi-lang models may have multiple lexicons
                 val lexiconFiles = java.io.File(modelDir).listFiles { _, name -> name.startsWith("lexicon-") && name.endsWith(".txt") }
@@ -59,8 +70,18 @@ class TtsManager {
                 val fstFiles = java.io.File(modelDir).listFiles { _, name -> name.endsWith(".fst") }
                 val ruleFsts = fstFiles?.sorted()?.joinToString(",") { it.absolutePath } ?: ""
 
-                val config = OfflineTtsConfig(
-                    model = OfflineTtsModelConfig(
+                val modelConfig = if (modelId.startsWith("kitten-")) {
+                    OfflineTtsModelConfig(
+                        kitten = OfflineTtsKittenModelConfig(
+                            model = "$modelDir/model.onnx",
+                            voices = "$modelDir/voices.bin",
+                            tokens = "$modelDir/tokens.txt",
+                            dataDir = "$modelDir/espeak-ng-data",
+                        ),
+                        numThreads = 4,
+                    )
+                } else {
+                    OfflineTtsModelConfig(
                         kokoro = OfflineTtsKokoroModelConfig(
                             model = "$modelDir/model.onnx",
                             voices = "$modelDir/voices.bin",
@@ -70,13 +91,22 @@ class TtsManager {
                             dictDir = dictDir,
                         ),
                         numThreads = 4,
-                    ),
+                    )
+                }
+
+                val config = OfflineTtsConfig(
+                    model = modelConfig,
                     ruleFsts = ruleFsts,
                 )
 
-                tts = OfflineTts(config = config)
-                AppLog.i(TAG, "TTS engine initialized successfully")
+                OfflineTts(config = config)
             }
+
+            generateMutex.withLock {
+                tts = candidate
+                activeModelId = modelId
+            }
+            AppLog.i(TAG, "TTS engine initialized successfully with $modelId")
         }
     }
 
@@ -97,9 +127,23 @@ class TtsManager {
         generateMutex.withLock {
             val engine = tts ?: throw IllegalStateException("TTS not initialized")
 
-            AppLog.i(TAG, "Generating speech: sid=$sid, speed=$speed, text=${text.take(50)}")
-            val audio = engine.generate(text = text, sid = sid, speed = speed)
-            AppLog.i(TAG, "Generated ${audio.samples.size} samples")
+            AppLog.i(TAG, "Generating speech: sid=$sid, speed=$speed, characters=${text.length}")
+            val audio = if (activeModelId?.startsWith("kitten-") == true) {
+                // Match sherpa-onnx's current Kitten Java/Android path. The
+                // generation-config API carries the v0.8 silence and speaker
+                // settings explicitly instead of relying on the legacy call.
+                engine.generateWithConfig(
+                    text,
+                    GenerationConfig(
+                        silenceScale = 0.2f,
+                        speed = speed,
+                        sid = sid,
+                    ),
+                )
+            } else {
+                engine.generate(text = text, sid = sid, speed = speed)
+            }
+            AppLog.i(TAG, "Generated ${audio.samples.size} samples at ${audio.sampleRate} Hz")
 
             audio.samples
         }
@@ -112,6 +156,7 @@ class TtsManager {
             generateMutex.withLock {
                 tts?.release()
                 tts = null
+                activeModelId = null
             }
         }
         AppLog.i(TAG, "TTS engine released")

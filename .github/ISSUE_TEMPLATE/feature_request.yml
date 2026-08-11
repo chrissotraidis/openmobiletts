@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a focused product or platform improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user problem before proposing implementation details.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Shared client, Desktop backend, Android, Future iOS, Documentation]
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Local-first or model considerations

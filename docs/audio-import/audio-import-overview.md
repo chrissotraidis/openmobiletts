@@ -1,56 +1,35 @@
 # Audio Import
 
-## What It Does
+## Current behavior
 
-Upload an existing audio file and transcribe it using Moonshine STT. Supports mp3, aac, ogg, and wav formats. The audio is decoded to PCM and fed through the STT engine, producing editable text.
+The Generate upload action accepts supported audio alongside documents and
+routes audio to local speech-to-text. Desktop decodes through its audio stack;
+Android uses `MediaExtractor`/`MediaCodec`, mixes/resamples to Moonshine's
+16 kHz mono input, and returns editable text.
 
-## Why It Matters
+The active STT model is Moonshine v1 Base English INT8. Import is therefore
+English-only and experimental.
 
-Users have existing audio content (voice memos, recordings, interviews) they want transcribed. This completes the "any audio → text" story alongside live microphone dictation.
+## Supported surface
 
-## Core Rules
+- Common inputs include MP3, AAC, OGG, and WAV, subject to codecs available on
+  the active platform.
+- The client chooses the audio route from the selected file; the decoder still
+  validates whether the content can be read.
+- The transcript replaces or populates the shared editable text area, where it
+  can be corrected, exported, or synthesized.
+- Android declares audio import in its platform-capability response.
 
-- Supported formats: mp3, aac, ogg, wav (spec-stated)
-- Maximum duration: 2 hours (user-stated)
-- Audio decoded to 16kHz mono PCM (Moonshine's expected input format) (spec-stated)
-- Android: `MediaExtractor` + `MediaCodec` for decoding (zero external dependencies) (spec-stated)
-- Desktop: ffmpeg (already a system dependency) for decoding (spec-stated)
-- Streams PCM chunks to avoid loading entire files into memory (spec-stated)
-- File type detection by extension — routes audio files to STT, document files to text extraction (spec-stated)
-- Transcribed text appears in the text area, fully editable (spec-stated)
+## Current limits
 
-## New Code
-
-### Android (Kotlin)
-
-- **AudioDecoder.kt** — Decodes imported audio files to PCM using `MediaExtractor` (demux) + `MediaCodec` (decode). Resamples to 16kHz mono. Streams PCM chunks to SttManager.
-
-### Desktop (Python)
-
-- Audio decoding via ffmpeg subprocess (already available). Pipes decoded PCM to Moonshine.
-
-### Frontend (SvelteKit)
-
-- **AudioFileUpload.svelte** (extension of existing upload) — File picker accepts both document formats AND audio formats. Detects file type, routes to appropriate pipeline.
-
-## Integration with Upload Button
-
-The existing Upload Document button is extended — not replaced. When a user selects a file:
-1. App checks file extension
-2. Document files (pdf, docx, txt, md) → existing text extraction → TTS path
-3. Audio files (mp3, aac, ogg, wav) → new PCM decode → STT transcription path
-
-## What's Assumed
-
-- 2-hour max covers the vast majority of use cases (voice memos, meetings, lectures) — Risk if wrong: Low
-- Android's MediaExtractor/MediaCodec handle all listed formats reliably — Risk if wrong: Low (these are well-supported system APIs)
-- Memory usage stays reasonable when streaming PCM chunks for long files — Risk if wrong: Medium
-
-## Key References
-
-- **Source spec:** `docs/EXPANSION-PLAN-OPEN-MOBILE-VOICE.md`, section "Audio File Import"
-- **Related:** [STT](../stt/stt-overview.md) for the transcription engine
+Android accepts at most 15 minutes and 256 MiB per input, validates duration
+while decoding, and sends Moonshine overlapping 25-second windows. It still
+materializes one bounded 16 kHz float array, so 5/15-minute peak-memory,
+cancellation, and physical-device acceptance remain. Music, silence, mislabeled
+codecs, DRM, and unsupported formats must fail without erasing current text.
 
 ## Status
 
-🔵 Not Started
+🟡 Bounded implementation. Representative short-file functional checks,
+5/15-minute memory tests, error copy, cancellation, and physical Android
+acceptance remain open.

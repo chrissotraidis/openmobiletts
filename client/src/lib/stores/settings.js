@@ -11,7 +11,10 @@ const defaults = {
 	autoPlay: true,
 	serverUrl: '',
 	engine: 'kokoro',
+	cleanupIntervalDays: 30,
 };
+
+const PORTABLE_KEYS = ['defaultVoice', 'defaultSpeed', 'autoPlay', 'engine', 'cleanupIntervalDays'];
 
 function loadSettings() {
 	try {
@@ -43,6 +46,17 @@ function createSettingsStore() {
 		reset() {
 			storeUpdate((s) => {
 				const next = { ...defaults, serverUrl: s.serverUrl };
+				localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+				return next;
+			});
+		},
+		applyPortableSettings(imported) {
+			storeUpdate((current) => {
+				const next = { ...current };
+				for (const key of PORTABLE_KEYS) {
+					if (Object.hasOwn(imported, key)) next[key] = imported[key];
+				}
+				next.defaultSpeed = 1.0;
 				localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 				return next;
 			});

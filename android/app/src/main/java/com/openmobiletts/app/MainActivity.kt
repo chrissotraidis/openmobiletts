@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Process
 import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
@@ -17,11 +18,14 @@ import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.net.Uri
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -29,23 +33,29 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.work.WorkInfo
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val TRUSTED_HOST = "127.0.0.1"
+        private const val TRUSTED_SCHEME = "http"
+        const val EXTRA_RESUME_MODEL_ID = "resume_model_id"
+        const val EXTRA_RESUME_SECTION = "resume_section"
     }
 
     private var webView: WebView? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private var pendingWebViewPermissionRequest: android.webkit.PermissionRequest? = null
+
+    private fun isTrustedAppUrl(uri: Uri?): Boolean = uri != null &&
+        uri.scheme == TRUSTED_SCHEME &&
+        uri.host == TRUSTED_HOST &&
+        uri.port == OpenMobileTtsApp.PORT
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -78,6 +88,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Android 15+ enforces edge-to-edge layouts for current target SDKs.
+        // Keep the dark system bars, then place native/WebView content inside
+        // the reported status, navigation, and display-cutout insets.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -94,9 +113,9 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "onCreate: TTS model=$ttsReady, STT model=$sttReady")
 
         if (ttsReady) {
-            // TTS is the minimum requirement to start the app.
-            // STT model downloads in background if missing — STT endpoints
-            // return "model not found" until download completes.
+            // TTS is the minimum requirement to start the app. Existing TTS-only
+            // users choose whether to add STT from Settings; upgrades never start
+            // a large network transfer without an explicit action.
             try {
                 app.ensureServerRunning()
                 Log.i(TAG, "Server started, alive = ${app.httpServer?.isAlive}")
@@ -104,32 +123,6 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to start server", e)
             }
             showWebView()
-
-            // Download STT model in background if missing (existing user upgrade path)
-            if (!sttReady) {
-                Log.i(TAG, "STT model missing — downloading in background")
-                scope.launch {
-                    try {
-                        val downloader = ModelDownloader()
-                        withContext(Dispatchers.IO) {
-                            downloader.downloadSttModel(filesDir)
-                        }
-                        Log.i(TAG, "STT model downloaded in background")
-
-                        // Initialize STT engine after download
-                        val sttApp = application as OpenMobileTtsApp
-                        if (!sttApp.sttManager.isInitialized) {
-                            val sttModelDir = downloader.getSttModelDir(filesDir)
-                            withContext(Dispatchers.IO) {
-                                sttApp.sttManager.init(sttModelDir)
-                            }
-                            Log.i(TAG, "STT engine initialized after background download")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Background STT model download failed: ${e.message}")
-                    }
-                }
-            }
         } else {
             showDownloadUI()
         }
@@ -138,6 +131,8 @@ class MainActivity : AppCompatActivity() {
     // ---------- Download UI (programmatic, no Compose, no XML) ----------
 
     private fun showDownloadUI() {
+        val modelDownloader = ModelDownloader(this)
+        val ttsModel = modelDownloader.ttsModel
         val bgColor = Color.parseColor("#0a0c10")
         val textColor = Color.parseColor("#e2e8f0")
         val mutedColor = Color.parseColor("#94a3b8")
@@ -152,7 +147,7 @@ class MainActivity : AppCompatActivity() {
 
         // Title
         val title = TextView(this).apply {
-            text = "Open Mobile Voice"
+            text = AppMetadata.APP_NAME
             setTextColor(textColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             gravity = Gravity.CENTER
@@ -172,7 +167,7 @@ class MainActivity : AppCompatActivity() {
 
         // Status text
         val statusText = TextView(this).apply {
-            text = "Download models to get started"
+            text = "Download the voice model to get started"
             setTextColor(mutedColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
@@ -208,7 +203,7 @@ class MainActivity : AppCompatActivity() {
 
         // Download button
         val downloadBtn = Button(this).apply {
-            text = "Download Models (~600 MB)"
+            text = "Download Voice Model (${ttsModel.archiveSizeMb} MB)"
             setTextColor(Color.WHITE)
             setBackgroundColor(accentColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -220,82 +215,87 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(downloadBtn)
 
-        setContentView(root)
+        val cancelBtn = Button(this).apply {
+            text = "Cancel"
+            setTextColor(mutedColor)
+            setBackgroundColor(Color.TRANSPARENT)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            visibility = View.GONE
+        }
+        root.addView(cancelBtn)
 
-        // Download action
-        downloadBtn.setOnClickListener {
-            downloadBtn.isEnabled = false
-            downloadBtn.text = "Downloading..."
-            progressBar.visibility = View.VISIBLE
-            progressText.visibility = View.VISIBLE
-            statusText.text = "Downloading TTS model..."
+        setInsetContentView(root)
 
-            scope.launch {
-                try {
-                    val downloader = ModelDownloader()
+        fun resetDownloadUi(message: String) {
+            statusText.text = message
+            downloadBtn.isEnabled = true
+            downloadBtn.text = "Download Voice Model (${ttsModel.archiveSizeMb} MB)"
+            cancelBtn.visibility = View.GONE
+            progressBar.visibility = View.GONE
+            progressText.visibility = View.GONE
+        }
 
-                    // Step 1: Download TTS model (~350 MB)
-                    withContext(Dispatchers.IO) {
-                        downloader.downloadTtsModel(filesDir) { bytesRead, totalBytes ->
-                            val percent = if (totalBytes > 0) {
-                                ((bytesRead * 100) / totalBytes).toInt()
-                            } else {
-                                -1
-                            }
-                            launch(Dispatchers.Main) {
-                                if (percent >= 0) {
-                                    progressBar.progress = percent
-                                    progressText.text = "$percent%"
-                                    statusText.text = "Downloading TTS model... ${bytesRead / 1024 / 1024} MB"
-                                } else {
-                                    progressBar.isIndeterminate = true
-                                    progressText.text = "${bytesRead / 1024 / 1024} MB"
-                                }
-                            }
-                        }
-                    }
-
-                    // Step 2: Download STT model (~250 MB)
-                    withContext(Dispatchers.Main) {
-                        progressBar.progress = 0
-                        progressText.text = "0%"
-                        statusText.text = "Downloading STT model..."
-                    }
-
-                    withContext(Dispatchers.IO) {
-                        downloader.downloadSttModel(filesDir) { bytesRead, totalBytes ->
-                            val percent = if (totalBytes > 0) {
-                                ((bytesRead * 100) / totalBytes).toInt()
-                            } else {
-                                -1
-                            }
-                            launch(Dispatchers.Main) {
-                                if (percent >= 0) {
-                                    progressBar.progress = percent
-                                    progressText.text = "$percent%"
-                                    statusText.text = "Downloading STT model... ${bytesRead / 1024 / 1024} MB"
-                                } else {
-                                    progressBar.isIndeterminate = true
-                                    progressText.text = "${bytesRead / 1024 / 1024} MB"
-                                }
-                            }
-                        }
-                    }
-
-                    statusText.text = "Starting server..."
-                    val app = application as OpenMobileTtsApp
-                    app.ensureServerRunning()
-
-                    showWebView()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Download failed", e)
-                    statusText.text = "Download failed: ${e.message}"
-                    downloadBtn.isEnabled = true
-                    downloadBtn.text = "Retry Download"
-                    progressBar.visibility = View.GONE
-                    progressText.visibility = View.GONE
+        ModelDownloadWork.observe(this, this, DownloadModel.TTS) { work ->
+            if (work == null) return@observe
+            when (work.state) {
+                WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                    downloadBtn.isEnabled = false
+                    downloadBtn.text = "Waiting for network..."
+                    cancelBtn.visibility = View.VISIBLE
+                    progressBar.visibility = View.VISIBLE
+                    progressBar.isIndeterminate = true
+                    progressText.visibility = View.VISIBLE
+                    progressText.text = "Waiting"
+                    statusText.text = "The download will start when a network is available."
                 }
+                WorkInfo.State.RUNNING -> {
+                    val downloaded = work.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                    val total = work.progress.getLong(
+                        ModelDownloadWorker.KEY_TOTAL_BYTES,
+                        ttsModel.archiveBytes,
+                    )
+                    val percent = if (total > 0L) ((downloaded * 100L) / total).toInt() else 0
+                    downloadBtn.isEnabled = false
+                    downloadBtn.text = "Downloading..."
+                    cancelBtn.visibility = View.VISIBLE
+                    progressBar.visibility = View.VISIBLE
+                    progressBar.isIndeterminate = total <= 0L
+                    progressBar.progress = percent
+                    progressText.visibility = View.VISIBLE
+                    progressText.text = if (total > 0L) "$percent%" else "${downloaded / 1024 / 1024} MB"
+                    statusText.text = "Downloading voice model... ${downloaded / 1024 / 1024} MB"
+                }
+                WorkInfo.State.SUCCEEDED -> {
+                    val app = application as OpenMobileTtsApp
+                    if (app.isTtsModelDownloaded()) {
+                        statusText.text = "Starting local voice engine..."
+                        app.ensureServerRunning()
+                        showWebView()
+                    } else {
+                        resetDownloadUi("Download finished but model validation failed. Retry the download.")
+                    }
+                }
+                WorkInfo.State.FAILED -> {
+                    val error = work.outputData.getString(ModelDownloadWorker.KEY_ERROR)
+                        ?: "Model download failed."
+                    resetDownloadUi(error)
+                }
+                WorkInfo.State.CANCELLED -> resetDownloadUi("Download paused. Tap download to resume.")
             }
+        }
+
+        downloadBtn.setOnClickListener {
+            val requiredBytes = modelDownloader.minimumTtsFreeBytes()
+            if (filesDir.usableSpace < requiredBytes) {
+                resetDownloadUi("Free at least ${requiredBytes / 1024 / 1024} MB and retry.")
+                return@setOnClickListener
+            }
+            ModelDownloadWork.enqueue(this, DownloadModel.TTS)
+        }
+
+        cancelBtn.setOnClickListener {
+            ModelDownloadWork.cancel(this, DownloadModel.TTS)
+            cancelBtn.isEnabled = false
         }
     }
 
@@ -308,6 +308,9 @@ class MainActivity : AppCompatActivity() {
             settings.databaseEnabled = true          // Required for IndexedDB (audio cache)
             settings.mediaPlaybackRequiresUserGesture = false  // Allow auto-play
             settings.allowContentAccess = true
+            settings.allowFileAccess = false
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            settings.safeBrowsingEnabled = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
             settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE  // Always load fresh assets
@@ -316,6 +319,26 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#0a0c10"))
 
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                ): Boolean {
+                    val destination = request?.url
+                    if (isTrustedAppUrl(destination)) return false
+                    Log.w(TAG, "Blocked WebView navigation outside app origin: $destination")
+                    return true
+                }
+
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    val destination = url?.let(Uri::parse)
+                    if (!isTrustedAppUrl(destination)) {
+                        Log.w(TAG, "Stopped untrusted WebView page: $url")
+                        view?.stopLoading()
+                        return
+                    }
+                    super.onPageStarted(view, url, favicon)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     Log.i(TAG, "WebView page finished: $url")
@@ -348,6 +371,11 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
                     request?.let { req ->
+                        if (!isTrustedAppUrl(req.origin)) {
+                            Log.w(TAG, "Denied WebView permission from untrusted origin: ${req.origin}")
+                            req.deny()
+                            return@let
+                        }
                         val resources = req.resources
                         Log.i(TAG, "WebView permission request: ${resources.joinToString()}")
 
@@ -374,6 +402,11 @@ class MainActivity : AppCompatActivity() {
                     filePathCallback: ValueCallback<Array<Uri>>?,
                     fileChooserParams: FileChooserParams?
                 ): Boolean {
+                    if (!isTrustedAppUrl(webView?.url?.let(Uri::parse))) {
+                        Log.w(TAG, "Denied file chooser outside trusted app origin")
+                        filePathCallback?.onReceiveValue(null)
+                        return false
+                    }
                     // Cancel any pending callback from a previous picker
                     fileUploadCallback?.onReceiveValue(null)
                     fileUploadCallback = filePathCallback
@@ -403,7 +436,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(AndroidBridge(), "Android")
 
         this.webView = webView
-        setContentView(webView)
+        setInsetContentView(webView)
 
         // Forward notification button presses to the WebView's player controls
         TtsService.playbackCommandCallback = { command ->
@@ -431,7 +464,62 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        webView.loadUrl("http://127.0.0.1:${OpenMobileTtsApp.PORT}/")
+        val appUrl = Uri.Builder()
+            .scheme(TRUSTED_SCHEME)
+            .encodedAuthority("$TRUSTED_HOST:${OpenMobileTtsApp.PORT}")
+            .path("/")
+            .apply {
+                val resumeModelId = intent.getStringExtra(EXTRA_RESUME_MODEL_ID)?.take(100)
+                val resumeSection = intent.getStringExtra(EXTRA_RESUME_SECTION)
+                if (!resumeModelId.isNullOrEmpty() && resumeSection in setOf("models", "voice")) {
+                    appendQueryParameter("resume_model", resumeModelId)
+                    appendQueryParameter("resume_section", resumeSection)
+                }
+            }
+            .build()
+            .toString()
+        intent.removeExtra(EXTRA_RESUME_MODEL_ID)
+        intent.removeExtra(EXTRA_RESUME_SECTION)
+        webView.loadUrl(appUrl)
+    }
+
+    /**
+     * Hosts app content below system bars while the window remains edge-to-edge.
+     * This is shared by first-run download UI and the WebView so neither can be
+     * obscured by a status bar, camera cutout, or gesture navigation area.
+     */
+    private fun setInsetContentView(content: View) {
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#0a0c10"))
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(container) { _, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout(),
+            )
+            val params = content.layoutParams as FrameLayout.LayoutParams
+            if (
+                params.leftMargin != insets.left ||
+                params.topMargin != insets.top ||
+                params.rightMargin != insets.right ||
+                params.bottomMargin != insets.bottom
+            ) {
+                params.setMargins(insets.left, insets.top, insets.right, insets.bottom)
+                content.layoutParams = params
+            }
+            windowInsets
+        }
+
+        setContentView(container)
+        ViewCompat.requestApplyInsets(container)
     }
 
     override fun onDestroy() {
@@ -440,7 +528,6 @@ class MainActivity : AppCompatActivity() {
         // Release any pending file upload callback to unblock the WebView file input
         fileUploadCallback?.onReceiveValue(null)
         fileUploadCallback = null
-        scope.cancel()
         webView?.destroy()
         webView = null
         super.onDestroy()
@@ -449,6 +536,27 @@ class MainActivity : AppCompatActivity() {
     // ---------- JS ↔ Native Bridge ----------
 
     inner class AndroidBridge {
+
+        @JavascriptInterface
+        fun restartApp(modelId: String?, modelLabel: String?, destination: String?) {
+            val safeModelId = modelId?.trim()?.take(100).orEmpty()
+            val safeLabel = modelLabel?.trim()?.take(80).orEmpty()
+            val safeDestination = destination?.takeIf { it in setOf("models", "voice") } ?: "models"
+            Log.i(TAG, "Bridge: restartApp model=$safeModelId destination=$safeDestination")
+            runOnUiThread {
+                // A tiny translucent Activity runs in its own process, so it
+                // survives this process exit and can relaunch the selected
+                // model without Android blocking a background launch.
+                startActivity(
+                    Intent(this@MainActivity, AppRestartActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(AppRestartActivity.EXTRA_MODEL_ID, safeModelId)
+                        .putExtra(AppRestartActivity.EXTRA_MODEL_LABEL, safeLabel)
+                        .putExtra(AppRestartActivity.EXTRA_DESTINATION, safeDestination),
+                )
+                Process.killProcess(Process.myPid())
+            }
+        }
 
         @JavascriptInterface
         fun onGenerationStarted() {

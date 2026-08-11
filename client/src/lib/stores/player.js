@@ -212,7 +212,7 @@ function createPlayerStore() {
 	 * Polls job status until complete, then fetches audio + timing from disk.
 	 * @param {string} jobId - Server job ID
 	 * @param {AbortSignal} signal - AbortSignal for cancellation
-	 * @returns {{ blob: Blob, timing: Array } | null}
+	 * @returns {Promise<{ blob: Blob, timing: any[] } | null>}
 	 */
 	async function recoverFromJob(jobId, signal) {
 		const POLL_INTERVAL = 2_000;

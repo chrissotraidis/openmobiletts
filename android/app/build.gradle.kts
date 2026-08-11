@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Sync
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,14 +7,14 @@ plugins {
 
 android {
     namespace = "com.openmobiletts.app"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.openmobiletts.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 1
-        versionName = "2.0.0"
+        versionName = rootProject.file("../VERSION").readText().trim()
     }
 
     buildTypes {
@@ -26,16 +28,16 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
 
     // SvelteKit outputs to _app/ — AAPT ignores underscore-prefixed dirs by default
-    aaptOptions {
+    androidResources {
         ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
     }
 
@@ -55,6 +57,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")
 
+    // Durable foreground model downloads with network constraints and retry.
+    implementation("androidx.work:work-runtime:2.10.5")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
@@ -67,8 +72,8 @@ dependencies {
     // Embedded HTTP server
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
-    // Sherpa-ONNX — JNI .so files in app/src/main/jniLibs/, Kotlin API in source
-    // No AAR needed: native libs are bundled directly
+    // One version-locked artifact supplies both Kotlin bindings and JNI libraries.
+    implementation("k2-fsa:sherpa-onnx:1.13.4@aar")
 
     // Archive extraction for model download (tar.bz2)
     implementation("org.apache.commons:commons-compress:1.26.1")
@@ -77,7 +82,55 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 }
 
-tasks.register<Exec>("bundleWebApp") {
+val installWebDependencies by tasks.registering(Exec::class) {
     workingDir = file("${rootDir}/../client")
-    commandLine("bash", "-c", "npm run build && rm -rf ${projectDir}/src/main/assets/webapp && cp -r build ${projectDir}/src/main/assets/webapp")
+    commandLine("npm", "ci")
+    inputs.file("${rootDir}/../client/package.json")
+    inputs.file("${rootDir}/../client/package-lock.json")
+    outputs.dir("${rootDir}/../client/node_modules")
+}
+
+val buildWebApp by tasks.registering(Exec::class) {
+    dependsOn(installWebDependencies)
+    workingDir = file("${rootDir}/../client")
+    commandLine("npm", "run", "build")
+    inputs.dir("${rootDir}/../client/src")
+    inputs.dir("${rootDir}/../client/static")
+    inputs.files(
+        "${rootDir}/../client/package.json",
+        "${rootDir}/../client/package-lock.json",
+        "${rootDir}/../client/svelte.config.js",
+        "${rootDir}/../client/vite.config.js",
+    )
+    outputs.dir("${rootDir}/../client/build")
+}
+
+val generatedWebAssets = layout.buildDirectory.dir("generated/webappAssets")
+val bundleWebApp by tasks.registering(Sync::class) {
+    dependsOn(buildWebApp)
+    from("${rootDir}/../client/build")
+    into(generatedWebAssets.map { it.dir("webapp") })
+}
+
+android.sourceSets["main"].assets.srcDir(generatedWebAssets)
+val sharedModelCatalog = file("${rootDir}/../models/model-catalog.v1.json")
+android.sourceSets["main"].assets.srcDir(sharedModelCatalog.parentFile)
+
+val verifySharedModelCatalog by tasks.registering {
+    inputs.file(sharedModelCatalog)
+    doLast {
+        check(sharedModelCatalog.isFile) { "Missing shared model catalog: $sharedModelCatalog" }
+        val catalogText = sharedModelCatalog.readText()
+        check(Regex("\\\"schema_version\\\"\\s*:\\s*1").containsMatchIn(catalogText)) {
+            "Unsupported shared model catalog schema"
+        }
+        check(catalogText.contains("kokoro-multi-lang-v1_0")) { "Missing managed TTS model" }
+        check(catalogText.contains("kitten-mini-en-v0_8")) { "Missing experimental Kitten Mini model" }
+        check(catalogText.contains("kitten-micro-en-v0_8")) { "Missing experimental Kitten Micro model" }
+        check(catalogText.contains("sherpa-onnx-moonshine-base-en-int8")) { "Missing managed STT model" }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(bundleWebApp, verifySharedModelCatalog)
 }

@@ -17,11 +17,14 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from .config import settings
+from .app_info import APP_NAME, APP_VERSION
 from .document_processor import DocumentProcessor
 from .text_preprocessor import TextPreprocessor
 from .tts_engine import EngineManager
 from .logging_config import setup_logging, get_logger, preview_text, export_logs_json, clear_logs
 from .stt_engine import SttEngine, polish_transcript
+from .model_catalog import MODEL_CATALOG, STT_MODEL, is_model_complete
+from .model_installer import ModelInstaller
 from .export_manager import export_pdf, export_markdown, export_plaintext
 from .project_storage import ProjectStorage
 
@@ -31,15 +34,17 @@ logger = get_logger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="Open Mobile TTS",
+    title=APP_NAME,
     description="Private text-to-speech app — single process, no auth",
-    version="3.0.0",
+    version=APP_VERSION,
 )
 
-# CORS — allow all origins for local/network access
+# Same-origin access needs no CORS. These defaults permit local development;
+# explicit LAN deployments can opt in with CORS_ORIGINS="*" or a host list.
+cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,7 +54,27 @@ engine_manager = EngineManager()
 text_preprocessor = TextPreprocessor()
 document_processor = DocumentProcessor()
 stt_engine = SttEngine()
+stt_init_lock = threading.Lock()
+stt_model_installer = ModelInstaller(Path(settings.STT_MODEL_CACHE_DIR).expanduser())
 project_storage = ProjectStorage()
+
+DESKTOP_CAPABILITIES = {
+    "schema_version": 1,
+    "platform": "desktop",
+    "features": {
+        "tts": True,
+        "stt": True,
+        "batch_transcription": True,
+        "engine_switching": True,
+        "document_import": True,
+        "audio_import": True,
+        "model_download": True,
+        "model_catalog": True,
+        "project_storage": True,
+        "exports": True,
+        "logs": True,
+    },
+}
 
 # Ensure upload directory exists
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -68,6 +93,18 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     text: str
     chunk_count: int
+
+
+@app.get("/api/capabilities")
+async def get_capabilities():
+    """Describe backend features consumed by the shared client."""
+    return DESKTOP_CAPABILITIES
+
+
+@app.get("/api/models/catalog")
+async def get_model_catalog():
+    """Return the same versioned model metadata packaged by Android."""
+    return MODEL_CATALOG
 
 
 # Voice endpoints
@@ -187,7 +224,10 @@ async def stream_tts(request: TTSRequest):
             ):
                 chunk_count += 1
                 total_audio_bytes += len(mp3_bytes)
-                logger.debug(f"Generated chunk {chunk_count}: {len(mp3_bytes)} bytes, text={timing.get('text', '')[:50]}")
+                logger.debug(
+                    f"Generated chunk {chunk_count}: {len(mp3_bytes)} bytes, "
+                    f"text={preview_text(timing.get('text', ''), 50)}"
+                )
 
                 # Yield timing metadata as JSON line
                 timing_line = f"TIMING:{json.dumps(timing)}\n"
@@ -438,16 +478,37 @@ def _ensure_stt_ready() -> None:
             detail="STT not available — sherpa_onnx not installed",
         )
 
-    if stt_engine.is_initialized:
-        return
+    with stt_init_lock:
+        if stt_engine.is_initialized:
+            return
 
-    model_dir = Path.home() / ".cache" / SttEngine.MODEL_NAME
-    if not model_dir.exists():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"STT model not found at {model_dir}. Download it first.",
-        )
-    stt_engine.init(str(model_dir))
+        model_dir = STT_MODEL.install_dir(Path(settings.STT_MODEL_CACHE_DIR).expanduser())
+        if not is_model_complete(model_dir, STT_MODEL):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"STT model not found at {model_dir}. Download it first.",
+            )
+        stt_engine.init(str(model_dir))
+
+
+def _validate_stt_model(model_dir: Path) -> None:
+    """Load a staged model once before it is activated."""
+    if not stt_engine.is_available:
+        return
+    candidate = SttEngine(str(model_dir))
+    try:
+        candidate.init()
+    finally:
+        candidate.release()
+
+
+def _activate_stt_model(model_dir: Path) -> None:
+    """Make the newly activated model immediately ready for requests."""
+    if not stt_engine.is_available:
+        return
+    with stt_init_lock:
+        stt_engine.release()
+        stt_engine.init(str(model_dir))
 
 
 def _public_batch_job(job: dict) -> dict:
@@ -523,7 +584,7 @@ def _run_batch_job(job_id: str, job_dir: Path, items: list[dict]) -> None:
                     "source_file": source_name,
                     "transcript_file": markdown_name,
                     "status": "pending",
-                    "model": "moonshine-v2-medium",
+                    "model": STT_MODEL.model_id,
                     "error": None,
                 }
 
@@ -535,7 +596,7 @@ def _run_batch_job(job_id: str, job_dir: Path, items: list[dict]) -> None:
                     markdown = _format_transcript_markdown(
                         title=title,
                         source_filename=source_name,
-                        model="moonshine-v2-medium",
+                        model=STT_MODEL.label,
                         transcribed_at=transcribed_at,
                         transcript=transcript,
                     )
@@ -556,7 +617,7 @@ def _run_batch_job(job_id: str, job_dir: Path, items: list[dict]) -> None:
                     markdown = _format_transcript_markdown(
                         title=title,
                         source_filename=source_name,
-                        model="moonshine-v2-medium",
+                        model=STT_MODEL.label,
                         transcribed_at=transcribed_at,
                         transcript="",
                         error=error,
@@ -604,7 +665,7 @@ class SttTranscribeResponse(BaseModel):
 
 @app.post("/api/stt/transcribe", response_model=SttTranscribeResponse)
 async def stt_transcribe(audio: UploadFile = File(...)):
-    """Transcribe uploaded audio to text via Moonshine v2."""
+    """Transcribe uploaded audio with the installed local STT model."""
     # Save uploaded audio to temp file
     safe_name = f"{uuid.uuid4().hex[:8]}_{audio.filename or 'audio.wav'}"
     file_path = Path(settings.UPLOAD_DIR) / safe_name
@@ -626,7 +687,7 @@ async def stt_transcribe(audio: UploadFile = File(...)):
         text = stt_engine.transcribe_file(str(file_path))
         duration_ms = 0  # TODO: extract from audio metadata
 
-        return {"text": text, "duration_ms": duration_ms, "model": "moonshine-v2-medium"}
+        return {"text": text, "duration_ms": duration_ms, "model": STT_MODEL.model_id}
 
     except HTTPException:
         raise
@@ -804,7 +865,7 @@ async def stt_batch_transcribe(files: List[UploadFile] = File(...)):
                 "source_file": source_name,
                 "transcript_file": markdown_name,
                 "status": "pending",
-                "model": "moonshine-v2-medium",
+                "model": STT_MODEL.model_id,
                 "error": None,
             }
 
@@ -827,7 +888,7 @@ async def stt_batch_transcribe(files: List[UploadFile] = File(...)):
                 markdown = _format_transcript_markdown(
                     title=title,
                     source_filename=source_name,
-                    model="moonshine-v2-medium",
+                    model=STT_MODEL.label,
                     transcribed_at=transcribed_at,
                     transcript=transcript,
                 )
@@ -841,7 +902,7 @@ async def stt_batch_transcribe(files: List[UploadFile] = File(...)):
                 markdown = _format_transcript_markdown(
                     title=title,
                     source_filename=source_name,
-                    model="moonshine-v2-medium",
+                    model=STT_MODEL.label,
                     transcribed_at=transcribed_at,
                     transcript="",
                     error=error,
@@ -867,15 +928,38 @@ async def stt_batch_transcribe(files: List[UploadFile] = File(...)):
 @app.get("/api/stt/models")
 async def stt_models():
     """List available STT models."""
+    return {"models": [stt_model_installer.snapshot(STT_MODEL, active=stt_engine.is_initialized)]}
+
+
+class SttModelDownloadRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/stt/models/download", status_code=status.HTTP_202_ACCEPTED)
+async def download_stt_model(request: SttModelDownloadRequest):
+    """Start the pinned STT model download, or return its current status."""
+    if request.model != STT_MODEL.model_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown STT model: {request.model}",
+        )
+
+    already_downloaded = is_model_complete(
+        STT_MODEL.install_dir(Path(settings.STT_MODEL_CACHE_DIR).expanduser()),
+        STT_MODEL,
+    )
+    try:
+        model_status = stt_model_installer.start(
+            STT_MODEL,
+            validate=_validate_stt_model,
+            on_activated=_activate_stt_model,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
     return {
-        "models": [
-            {
-                "name": "moonshine-v2-medium",
-                "size_mb": 250,
-                "downloaded": stt_engine.is_initialized or (Path.home() / ".cache" / SttEngine.MODEL_NAME).exists(),
-                "active": stt_engine.is_initialized,
-            }
-        ]
+        "status": "already_downloaded" if already_downloaded else "started",
+        "model": model_status,
     }
 
 
@@ -1002,7 +1086,7 @@ async def delete_project(project_id: str):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "3.0.0"}
+    return {"status": "healthy", "name": APP_NAME, "version": APP_VERSION}
 
 
 # Logs export endpoint (for mobile bug reports)
@@ -1028,6 +1112,15 @@ async def clear_logs_endpoint():
     return {"cleared": True}
 
 
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def unknown_api_route(path: str):
+    """Keep API failures JSON; SPA fallback is only for browser navigation."""
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
 # Serve built SvelteKit static files
 # This must be mounted LAST so API routes take priority
 _static_dir = Path(settings.STATIC_DIR) if settings.STATIC_DIR else Path(__file__).parent.parent.parent / "client" / "build"
@@ -1048,7 +1141,7 @@ else:
     @app.get("/")
     async def root():
         return {
-            "name": "Open Mobile TTS",
-            "version": "3.0.0",
+            "name": APP_NAME,
+            "version": APP_VERSION,
             "status": "Client not built. Run: cd client && npm run build",
         }

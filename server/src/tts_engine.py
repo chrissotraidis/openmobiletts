@@ -195,7 +195,7 @@ class EngineManager:
         sherpa_available = Path(settings.SHERPA_MODEL_DIR, "model.onnx").exists()
         engines.append({
             "name": "sherpa-onnx",
-            "label": "Sherpa-ONNX (Multi-lang)",
+            "label": "Kokoro (Sherpa-ONNX, English)",
             "available": sherpa_available,
         })
         return engines

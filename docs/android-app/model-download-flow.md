@@ -1,88 +1,93 @@
-# Model Download Flow
+# Android Model Download Flow
 
-> **Note:** The TTS model download (steps 1-6) documents existing v2.0 functionality. The STT model download (steps 7-9) is new in v3.0.
+## First launch
 
-## Who
+1. `MainActivity` checks the app-private model directory.
+2. If Kokoro TTS is missing, it shows one explicit **Download Voice Model
+   (333.2 MB)** action.
+3. The app checks space for the TTS archive, staged extraction, and installed
+   candidate.
+4. A unique WorkManager job starts with a connected-network constraint and a
+   foreground data-sync notification.
+5. Progress survives Activity recreation. Transient I/O failures use
+   exponential backoff.
+6. The downloader validates response metadata, archive size, SHA-256, safe
+   paths, and required non-empty files.
+7. TTS packages are installed after structural and integrity validation without
+   creating a temporary native engine in the download process. STT separately
+   initializes its staged recognizer.
+8. The candidate is activated without deleting the previous working model.
+9. The WebView opens after TTS is available.
 
-A user launching the app for the first time (or after a fresh install / data clear).
+Speech-to-text is not part of first launch. It is an optional 239.2 MiB model
+requested later from Settings.
 
-## The Happy Path
+## Pause, resume, and process death
 
-### First Launch (v3.0)
+- Pausing cancels the unique work and retains a valid `.part` archive under
+  app-private `.model-downloads/` storage.
+- Retrying enqueues the same model's unique work and requests the remaining
+  bytes with HTTP Range.
+- If the host returns a full response, the downloader overwrites the partial
+  file instead of appending incompatible data.
+- Process or Activity loss does not make the Activity own the transfer state;
+  the UI observes WorkInfo on return.
+- A checksum failure removes the invalid partial archive. Network interruption
+  and user cancellation do not.
 
-1. User installs and opens Open Mobile Voice
-2. **MainActivity** checks for TTS model files in cache directory
-3. TTS model not found → **download screen** appears (programmatic Views, not Compose)
-4. "Downloading TTS model... (95 MB)" — progress bar with percentage
-5. Model downloads from GitHub releases via ModelManager
-6. ZIP is extracted to cache directory (Zip Slip protected)
-7. TTS model ready → ModelManager checks for STT model
-8. STT model not found → "Downloading STT model... (100 MB)" — same progress UI
-9. STT model downloads and extracts
-10. Both models loaded into memory via TtsManager and SttManager
-11. Download screen dismisses → **WebView loads** SvelteKit app
-12. App is fully functional — both TTS and STT available
+## Optional STT download
 
-### Optional Medium STT Model Download
+Settings reports the exact Moonshine v1 Base English INT8 model, installed and
+archive sizes, readiness, durable progress, and errors. Download/retry starts
+WorkManager; Pause cancels the current work. The model initializes lazily when
+transcription starts.
 
-1. User navigates to Settings → STT Defaults
-2. Sees: "STT Model: Moonshine v2 Small (active)" and "Moonshine v2 Medium (250 MB) — Better accuracy"
-3. Taps **Download** next to Medium model
-4. Progress indicator in Settings shows download progress
-5. Download completes → user can switch active STT model to Medium
-6. Medium model loads into memory (Small can be unloaded or both kept, depending on RAM)
+## Experimental TTS models
 
-## What Could Go Wrong
+After Kokoro first-run setup, Android Models settings lists Kitten Mini v0.8
+and Kitten Micro v0.8 as optional English-only experiments. Each uses its own
+unique WorkManager job and the same resume, hash, extraction, and required-file
+checks as Kokoro. A successful download does not silently change the active
+voice model.
 
-### Network failure during download
-- **When:** WiFi drops or server is unreachable mid-download
-- **What happens:** Download pauses. Progress bar shows "Download paused — check your connection."
-- **Recovery:** App retries automatically when connection is restored, or user taps "Retry."
+**Use this model** persists the installed candidate and restarts Android into a
+clean process before loading it. The eight Kitten voices are then exposed to
+Voice settings. Users can remove an inactive experimental model, but cannot
+remove the active model or the required Kokoro fallback.
 
-### Download interrupted by app kill
-- **When:** User force-closes app or Android kills process during download
-- **What happens:** Partial files remain on disk
-- **Recovery:** On next launch, ModelManager detects incomplete download (size/hash check), deletes partial files, restarts download from scratch.
+## Current model sizes
 
-### Insufficient storage space
-- **When:** Device doesn't have ~200 MB free for both models (or ~450 MB if Medium STT is included)
-- **What happens:** Download fails with OS-level storage error
-- **Recovery:** Show "Not enough storage space. Free up X MB to continue." User frees space and retries.
+| Role | Archive | Installed planning size | Required timing |
+|---|---:|---:|---|
+| Kokoro TTS | 333.2 MiB | up to 384 MiB reserved | First use |
+| Kitten Mini v0.8 TTS | 64.4 MiB | 94.9 MiB | Optional from Settings |
+| Kitten Micro v0.8 TTS | 42.4 MiB | 59.8 MiB | Optional from Settings |
+| Moonshine v1 Base STT | 239.2 MiB | 273.6 MiB | Optional from Settings |
 
-### GitHub releases unreachable
-- **When:** GitHub CDN is down or blocked (e.g., corporate network, regional firewall)
-- **What happens:** Download fails after timeout
-- **Recovery:** Show error with suggestion to check network. No alternative mirror in v3.0.
+## Acceptance status
 
-### Model file corruption
-- **When:** Download completes but file is corrupt (network error, disk error)
-- **What happens:** TtsManager or SttManager fails to initialize (sherpa-onnx throws exception)
-- **Recovery:** ModelManager detects initialization failure, deletes corrupt files, prompts re-download.
+- [x] First run requires only TTS.
+- [x] Unique foreground WorkManager jobs, network constraint, progress, retry,
+  pause, and partial resume are implemented.
+- [x] Archive size/hash, storage preflight, safe extraction, required-file
+  validation, staging, and rollback activation are implemented.
+- [x] TTS download validation avoids temporary native engines; model changes
+  use a clean process restart. STT retains staged native load validation.
+- [x] Kitten Mini and Micro download, validate, activate, generate normal
+  24 kHz audio, return to Kokoro, and persist selection on the API 34 ARM64
+  emulator.
+- [x] Physical Pixel 9 Pro XL clean-process generation passed for Kokoro,
+  Kitten Mini, Kitten Micro, and Kokoro again after the complete model cycle.
+- [x] The Models button automatically relaunched the emulator in a new process,
+  showed a branded selected-model transition, and restored the active model
+  card with matching voices and an **Active and ready** confirmation.
+- [x] Android strict Kotlin compilation passes with WorkManager 2.10.5.
+- [ ] A fresh required Kokoro first-run download passes on a physical phone.
+- [ ] Pause/resume, process death, retry, and notification behavior pass on a
+  physical phone and emulator.
+- [ ] Metered-network preference and model repair/delete controls are designed.
 
-### Zip Slip attack (security)
-- **When:** A compromised model ZIP contains path traversal entries (e.g., `../../etc/passwd`)
-- **What happens:** ModelDownloader validates all ZIP entry paths — rejects any that escape the target directory
-- **Recovery:** Download is rejected. Logged as security event. This is already implemented in v2.0.
-
-## Acceptance Criteria
-
-Existing (v2.0):
-- [x] First launch shows download progress for TTS model
-- [x] TTS model downloads from GitHub releases
-- [x] ZIP extraction is Zip Slip protected
-- [x] App doesn't load WebView until model is ready
-- [x] Interrupted downloads are detected and restarted on next launch
-
-New (v3.0):
-- [ ] First launch downloads both TTS (~95 MB) and STT (~100 MB) models sequentially
-- [ ] Progress UI shows which model is downloading (TTS vs STT)
-- [ ] Settings shows STT model status (Small downloaded, Medium available)
-- [ ] Optional Medium model download works from Settings
-- [ ] Both models load into memory simultaneously (~195 MB)
-- [ ] Network failure during download shows clear error and allows retry
-
-## Related
-
-- See: [Android App Overview](android-app-overview.md) for full Kotlin architecture
-- See: [STT Overview](../stt/stt-overview.md) for model specs and platform strategy
-- See: [Decision 009](../decisions/009-github-releases-model-hosting.md) for hosting choice
+See decisions [015](../decisions/015-workmanager-model-delivery-and-tts-first-start.md),
+[020](../decisions/020-experimental-android-kitten-models.md), and
+[021](../decisions/021-process-isolated-android-tts-switching.md), plus the
+[model provenance ledger](../MODEL_PROVENANCE.md).

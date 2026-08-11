@@ -1,4 +1,5 @@
 <script>
+	let { capabilities = null } = $props();
 	import { playerStore, PlayState } from '$lib/stores/player';
 	import { settingsStore } from '$lib/stores/settings';
 	import { historyStore } from '$lib/stores/history';
@@ -13,7 +14,7 @@
 	let isUploading = $state(false);
 	let uploadError = $state('');
 	let fileInput;
-	let batchFileInput;
+	let batchFileInput = $state(null);
 	let voices = $state([]);
 	let selectedLang = $state('');
 	let activeEngine = $state('');
@@ -26,6 +27,7 @@
 	let isExporting = $state(false);
 	// Batch transcription state is held in batchTranscriptionStore so it survives view switches.
 	const isBatchTranscribing = $derived($batchTranscriptionStore.active);
+	const supportsBatchTranscription = $derived(capabilities?.features?.batch_transcription === true);
 	const batchStatus = $derived($batchTranscriptionStore.status);
 	const batchProgress = $derived($batchTranscriptionStore.progress);
 
@@ -173,6 +175,10 @@
 				// Android WebView: use native bridge to save file
 				const reader = new FileReader();
 				reader.onload = () => {
+					if (typeof reader.result !== 'string') {
+						uploadError = 'Failed to read export data';
+						return;
+					}
 					const base64 = reader.result.split(',')[1];
 					window.Android.saveAudioFile(base64, filename, mimeTypes[format] || 'application/octet-stream');
 				};
@@ -628,30 +634,32 @@
 			class="hidden"
 		/>
 
-		<!-- Batch Upload Button -->
-		<button
-			onclick={() => batchFileInput?.click()}
-			disabled={isBusy}
-			class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
-			title="Select multiple audio files and download Markdown transcripts as a ZIP"
-		>
-			{#if isBatchTranscribing}
-				<Loader2 size={16} class="animate-spin" />
-				<span>Batching...</span>
-			{:else}
-				<Download size={16} />
-				<span>Batch Upload</span>
-			{/if}
-		</button>
+		{#if supportsBatchTranscription}
+			<!-- Batch Upload is currently a desktop-only backend capability. -->
+			<button
+				onclick={() => batchFileInput?.click()}
+				disabled={isBusy}
+				class="btn btn-secondary flex items-center justify-center gap-2 text-sm sm:w-auto"
+				title="Select multiple audio files and download Markdown transcripts as a ZIP"
+			>
+				{#if isBatchTranscribing}
+					<Loader2 size={16} class="animate-spin" />
+					<span>Batching...</span>
+				{:else}
+					<Download size={16} />
+					<span>Batch Upload</span>
+				{/if}
+			</button>
 
-		<input
-			bind:this={batchFileInput}
-			type="file"
-			multiple
-			accept=".mp3,.aac,.ogg,.wav,.webm,.m4a"
-			onchange={handleBatchUpload}
-			class="hidden"
-		/>
+			<input
+				bind:this={batchFileInput}
+				type="file"
+				multiple
+				accept=".mp3,.aac,.ogg,.wav,.webm,.m4a"
+				onchange={handleBatchUpload}
+				class="hidden"
+			/>
+		{/if}
 
 		<!-- Engine + Language + Voice (pushed right on desktop) -->
 		<div class="flex items-center gap-2 flex-wrap sm:ml-auto">
@@ -667,7 +675,7 @@
 					<select
 						value={selectedLang}
 						onchange={(e) => {
-							selectedLang = e.target.value;
+							selectedLang = e.currentTarget.value;
 							const first = voices.find((v) => v.language === selectedLang);
 							if (first) settingsStore.update('defaultVoice', first.name);
 						}}
@@ -686,7 +694,7 @@
 				<div class="relative">
 					<select
 						value={$settingsStore.defaultVoice}
-						onchange={(e) => settingsStore.update('defaultVoice', e.target.value)}
+						onchange={(e) => settingsStore.update('defaultVoice', e.currentTarget.value)}
 						disabled={isBusy}
 						class="bg-slate-900/60 border border-white/10 rounded-xl pl-3 pr-7 py-2 text-xs appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[100px]"
 					>

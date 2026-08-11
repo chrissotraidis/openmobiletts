@@ -1,93 +1,149 @@
-# Unknowns & Open Questions
+# Open Questions and Decision Gates
 
-Extracted from EXPANSION-PLAN-OPEN-MOBILE-VOICE.md and user discussion on 2026-03-16.
+**Last reviewed:** 2026-08-11
 
-## Resolved Questions
+This file contains unresolved choices that can materially change the product.
+Known defects and prioritized work belong in
+[the modernization audit](TECH_DEBT_AND_MODERNIZATION_AUDIT.md) and
+[Phase Zero plan](PHASE_ZERO_MODERNIZATION_PLAN.md).
 
-### Batch vs. streaming STT?
-- **Resolution:** Batch only in v3.0. Streaming deferred — technically complex, unexplored.
-- **Decision:** [007-batch-stt-before-streaming.md](decisions/007-batch-stt-before-streaming.md)
+## Working decisions to revisit after stabilization
 
-### Concurrent model loading on low-RAM devices?
-- **Resolution:** Document minimum requirements transparently. Not adding model-swapping complexity for low-RAM devices in v3.0.
+### Product name
 
-### Audio file size limits?
-- **Resolution:** 2 hours max duration for imported audio files.
+- **Working default:** Open Mobile TTS.
+- **Revisit when:** Real Moonshine v2 is benchmarked and STT is accepted on
+  desktop and Android.
+- **Decision:** Keep the established name or rename the broader workspace to
+  Open Mobile Voice.
 
-### PDF export quality across platforms?
-- **Resolution:** Android uses native `PdfDocument` (fastest, most native). Desktop uses ReportLab. Output may look slightly different — accepted tradeoff.
-- **Decision:** [008-android-native-pdf-export.md](decisions/008-android-native-pdf-export.md)
+### PWA support
 
-### Moonshine model hosting?
-- **Resolution:** GitHub releases, same as TTS model.
-- **Decision:** [009-github-releases-model-hosting.md](decisions/009-github-releases-model-hosting.md)
+- **Working default:** Do not advertise PWA/offline installation.
+- **Revisit when:** Desktop/Android Phase Zero gates pass.
+- **Decision:** Invest in a real install/update/offline shell or permanently
+  describe the desktop surface as a local web interface.
 
-## Bugs — Device Testing (3/16/26, Android Emulator)
+### Remote/LAN mode
 
-### BUG-1: STT model download URL is wrong (CRITICAL)
-- **Severity:** Blocks all STT functionality
-- **Symptom:** `Download size: 0 MB` then `Background STT model download failed`
-- **Cause:** URL `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-medium-en-int8.tar.bz2` returns empty/404
-- **Fix needed:** Find the correct sherpa-onnx release URL for Moonshine v2 Medium INT8 model
-- **Files:** `ModelDownloader.kt` (STT_MODEL_NAME, STT_MODEL_URL), `stt_engine.py` (MODEL_NAME)
+- **Working default:** Loopback-only default; no supported remote/VPS mode.
+- **Needed first:** authentication, TLS, origin allowlist, rate/resource limits,
+  secret storage, and threat model.
+- **Decision:** Support trusted LAN only, secured remote access, or neither.
 
-### BUG-2: Missing MODIFY_AUDIO_SETTINGS permission (CRITICAL)
-- **Severity:** Blocks all microphone recording
-- **Symptom:** `Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO. No audio device will be available for recording`
-- **Cause:** AndroidManifest.xml only has `RECORD_AUDIO`, missing `MODIFY_AUDIO_SETTINGS`
-- **Fix needed:** Add `<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />` to AndroidManifest.xml
-- **Files:** `AndroidManifest.xml`
+## Model questions
 
-### BUG-3: Generate tab doesn't clear text when switching back
-- **Severity:** UX — confusing
-- **Symptom:** Navigate from History (after playing an entry) back to Generate tab — old text from previous entry persists in the text area
-- **Fix needed:** Clear text area state when switching to Generate tab, or at minimum when navigating away from a history detail view
-- **Files:** `+page.svelte` (tab switching logic), `TextInput.svelte` (text state)
+### Default mobile TTS profile
 
-### BUG-4: Dropdown menus don't close on outside tap
-- **Severity:** UX — annoying
-- **Symptom:** Speed picker, export picker, and other popup menus stay open when tapping elsewhere on screen. Must re-tap the trigger button or select an option to close.
-- **Fix needed:** Add click-outside handler or invisible backdrop overlay to dismiss popups
-- **Files:** `TextInput.svelte` (showSpeedPicker, showExportPicker), `+page.svelte` (any settings dropdowns)
+Candidates: current Kokoro, KittenTTS Mini, KittenTTS Nano INT8, Pocket TTS
+INT8.
 
-### BUG-5: No STT model download button in Settings
-- **Severity:** UX — feature incomplete
-- **Symptom:** Settings shows "Moonshine v2 Medium: Not downloaded" but no way to trigger download
-- **Fix needed:** Add a download button next to the model status that triggers model download with progress
-- **Files:** `+page.svelte` (Storage & STT settings section)
+Decision requires blind listening, pronunciation, time-to-first-audio,
+real-time factor, disk, peak memory, battery, thermals, long-form stability,
+and license review on target devices.
 
-### BUG-6: Desktop STT model download endpoint missing
-- **Severity:** UX / setup — blocks first-run desktop STT setup from the UI
-- **Symptom:** Web Settings button POSTs `/api/stt/models/download`, but the FastAPI server returns 405 Method Not Allowed
-- **Current workaround:** Manually download `sherpa-onnx-moonshine-base-en-int8` into `~/.cache/sherpa-onnx-moonshine-base-en-int8`
-- **Fix needed:** Add desktop FastAPI download endpoint matching the Android `/api/stt/models/download` contract
-- **Files:** `server/src/main.py`, `client/src/routes/+page.svelte`
+### Default mobile STT profile
 
-## Feature Requests — Device Testing (3/16/26)
+Candidates: current Moonshine v1 Base INT8, Moonshine v2 Streaming Small, and
+Moonshine v2 Streaming Medium. whisper.cpp Base is the cross-platform
+multilingual control.
 
-### FEAT-1: Remote VPS connection for Android
-- **What:** Connect Android app to a remote desktop/VPS server running Open Mobile Voice instead of using local NanoHTTPD
-- **Why:** Desktop GPU is 35-210x real-time vs Android's 0.8x RTF. Remote connection gives phone users desktop-class speed.
-- **How:** The API contract is identical between NanoHTTPD and FastAPI. Android app could toggle between local engine and remote server. The existing `serverUrl` setting in the web app already supports this partially.
-- **Scope:** New feature — needs secure authentication for remote access, server URL configuration, connection testing, fallback to local
-- **Priority:** Post-v3.0 — document and plan separately
+Decision requires WER/CER, latency, partial-result stability, silence/noise
+hallucination, long-file behavior, disk, peak memory, battery, thermals, and
+license review.
 
-## Open Questions
+### Multilingual strategy
 
-### WebView MediaRecorder reliability?
-- **Owner:** TBD
-- **Status:** PARTIALLY ANSWERED — WebView requests AUDIO_CAPTURE permission correctly (logs confirm `onPermissionRequest` fires), but fails due to missing `MODIFY_AUDIO_SETTINGS` permission (BUG-2). After BUG-2 fix, test on real device.
-- **Current thinking:** Fix the permission first, then test on Pixel 9 Pro. Emulator may have additional mic limitations.
-- **Decide by:** After BUG-2 fix
+- **Unknown:** Which languages users actually need.
+- **Unknown:** Which TTS/STT candidates pass quality acceptance per language.
+- **Rule:** Do not expose a language because a voice ID or model card contains
+  it; verify model, text normalization, pronunciation, UI, and export behavior.
 
-### Minimum device RAM requirements?
-- **Owner:** TBD
-- **Why it matters:** Both models loaded simultaneously use ~345 MB (Medium STT). Need to verify this works on devices with less than 8 GB RAM.
-- **Current thinking:** Target 8 GB+ RAM as minimum. Test on a mid-range device.
-- **Decide by:** Before v3.0 release
+### Voice cloning
 
-### Repository rename timing?
-- **Owner:** User
-- **Why it matters:** openmobiletts → openmobilevoice affects GitHub URLs, model download URLs, package names, and documentation.
-- **Current thinking:** User will handle this later. Not a v3.0 blocker.
-- **Decide by:** Whenever the user is ready
+Pocket TTS and other candidates make cloning possible, but this adds consent,
+abuse, storage, provenance, license, and user-education requirements.
+
+- **Working default:** no voice cloning.
+- **Decision:** Only revisit if it becomes a clear product goal.
+
+## Platform questions
+
+### Android minimum hardware
+
+- Pixel 3a API 34 AVD is available for functional smoke tests.
+- Pixel 9 Pro remains the high-end reference.
+- A 4-6 GB physical Android phone must be selected for the low/mid baseline.
+- Minimum RAM, storage, and supported ABI cannot be set until the model bake-off.
+
+### Android background generation
+
+Validate foreground-service type/policy, process kill, notification denial,
+screen off, WebView throttling, Bluetooth/headphone routes, interruptions, and
+long jobs on Android 14-16.
+
+### iOS UI/backend transport
+
+Prototype both:
+
+1. loopback HTTP parity with Android; and
+2. typed WKScriptMessage/native jobs with native file references.
+
+Choose from lifecycle reliability, streaming, copying, debugging, and contract
+test reuse. Do not add a third drifting backend before this decision.
+
+### iOS model runtime
+
+- sherpa-onnx Swift/C is the parity baseline.
+- whisper.cpp/Core ML is an STT benchmark candidate.
+- Do not assume ONNX automatically uses the Apple Neural Engine.
+
+## Product questions
+
+### Desktop launcher environment
+
+**Resolved 2026-08-11:** The default launcher uses a repository-local `.venv`
+when no virtual environment is active and respects a deliberately active
+environment. See [Decision 011](decisions/011-project-virtual-environment-for-launcher.md).
+
+### Storage source of truth
+
+**Resolved 2026-08-11:** The client-visible History library and IndexedDB audio
+cache are authoritative. Backup includes history and portable preferences but
+not audio blobs or the device-specific server URL. See
+[Decision 014](decisions/014-client-library-is-the-visible-data-source.md).
+
+### Real progressive playback
+
+The server streams framed audio, but the browser assembles a Blob before
+playback. Decide whether to implement genuine progressive playback or change
+the product wording permanently.
+
+### Batch transcription on mobile
+
+**Resolved for the current release:** Android declares batch transcription
+unsupported and the shared client hides it. Revisit only with a bounded native
+job design and low-memory evidence.
+
+### First-run experience
+
+**Resolved 2026-08-11:** Android first run downloads only the required Kokoro
+TTS package. Moonshine STT is an explicit Settings download owned by
+WorkManager. See [Decision 015](decisions/015-workmanager-model-delivery-and-tts-first-start.md).
+
+## Brand questions
+
+- **Resolved for the stabilization release:** the product remains Open Mobile
+  TTS and uses selected visual option 1, a balanced text-and-waveform symbol.
+  See [Decision 016](decisions/016-two-panel-waveform-icon.md).
+- Which real desktop/Android screens will be used for the README hero.
+
+## Questions already resolved by the audit
+
+- Current STT is Moonshine v1 Base English INT8, not Moonshine v2 Medium.
+- Current Android/sherpa Kokoro is roughly 350-383 MB extracted, not 95 MB.
+- No LLM transcript corrector is present.
+- Android uses the shared Svelte UI in a WebView, not a separate Compose UI.
+- The current service worker disables the PWA cache and unregisters itself.
+- The selected icon family now supplies real Android, web, README, and
+  iOS-ready raster assets.

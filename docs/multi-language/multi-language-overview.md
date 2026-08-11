@@ -1,53 +1,38 @@
-# Multi-Language TTS
+# Multilingual TTS
 
-## What It Does
+## Current boundary
 
-Extends TTS from English-only to 9 languages supported by Kokoro-82M: American English, British English, Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese, and Mandarin Chinese.
+Multilingual TTS is not an accepted product capability. The Python backend is
+configured for one Kokoro language code at process start and defaults to
+American English. The Android/sherpa archive includes additional speaker
+identifiers, but identifiers are not evidence that text
+normalization, pronunciation, quality, licensing, and UI behavior are ready.
 
-## Why It Matters
+The active native UI now exposes only 28 English US/UK voices. The selected
+sherpa export documents English and Chinese runtime support, but Chinese stays
+hidden until normalization, pronunciation, and hands-on language acceptance.
+The UI does not advertise nine languages, 103 speakers, or an unchanged 95 MB
+package based on historical planning material.
 
-Unlocks the app for non-English speakers. The TTS engine and models already support these languages — the work is in text preprocessing and UI.
+## Acceptance required per language
 
-## Core Rules
+1. exact model/checkpoint and runtime;
+2. model, voice, and dataset/redistribution terms;
+3. representative names, numbers, dates, abbreviations, punctuation, and
+   long-form pronunciation;
+4. language-specific segmentation and normalization, including CJK behavior;
+5. voice labels that match actual language and speaker output;
+6. desktop and target-device latency, memory, thermals, and stability; and
+7. export, history, backup, and accessibility behavior.
 
-- Kokoro-82M natively supports 9 languages with 103 speakers (code-derived)
-- Sherpa-ONNX ships `kokoro-multi-lang-v1_1` model — same ~95 MB, all languages included (code-derived)
-- Same model size as English-only — no additional download for multi-language on Android (code-derived)
-- Japanese and Chinese require custom text chunking (no word boundaries/spaces) (code-derived)
-- `num2words` supports most languages via `lang` parameter (code-derived)
-- Per-language abbreviation expansion and punctuation rules needed (code-derived)
+## Direction
 
-### Language & Voice Inventory
-
-| Code | Language | Voices | Phonemizer | Notes |
-|------|----------|--------|------------|-------|
-| `a` | American English | 11 | Misaki (custom) | Current default |
-| `b` | British English | 8 | Misaki (custom) | |
-| `e` | Spanish | 2 | espeak-ng | |
-| `f` | French | 1 | espeak-ng | |
-| `h` | Hindi | 4 | espeak-ng | |
-| `i` | Italian | 2 | espeak-ng | |
-| `j` | Japanese | 5 | Misaki JAG2P | No spaces — custom chunking |
-| `p` | Brazilian Portuguese | 3 | espeak-ng | |
-| `z` | Mandarin Chinese | 8 | Misaki ZHG2P | No spaces — custom chunking |
-
-### Implementation Phases
-
-1. **M1: Language selection + voice routing** — Add language dropdown, extend voice map, filter voice picker by language. This alone gets working multilingual TTS.
-2. **M2: Per-language text preprocessing** — Language-aware preprocessor, per-language abbreviation dicts, CJK chunking adjustments.
-3. **M3: Auto language detection** (optional) — Lightweight offline detection via `langdetect` or `lingua-py`.
-4. **M4: UI localization** (separate) — Translate app interface strings. Only if non-English user base emerges.
-
-### Recommended Sequencing
-
-M1 first (high value, contained scope) → M2 language-by-language (bulk of work) → M3 nice-to-have → M4 separate concern.
-
-## Key References
-
-- **Source:** `docs/ROADMAP.md`, "Multi-Language Support (v2)"
-- **TTS engine:** `server/src/tts_engine.py`
-- **Text preprocessor:** `server/src/text_preprocessor.py`
+First determine which languages users need. Compare existing Kokoro support
+with candidate language packs only after the English model bake-off is
+repeatable. Prefer optional, independently licensed packs over making every
+user download unverified language data.
 
 ## Status
 
-🔵 Not Started
+🟡 Correctly gated. English remains the documented product baseline; other
+languages are research candidates rather than selectable product claims.

@@ -27,7 +27,12 @@ def setup_kokoro_models():
 
         # Initialize pipeline - this downloads models
         print("\n📥 Downloading Kokoro models (this may take a few minutes)...")
-        print("   Models will be cached at: ~/.cache/kokoro/")
+        try:
+            from huggingface_hub.constants import HF_HUB_CACHE
+            cache_dir = Path(HF_HUB_CACHE)
+        except Exception:
+            cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        print(f"   Models will be cached under: {cache_dir}")
 
         pipeline = KPipeline(lang_code='a')  # American English
 
@@ -45,17 +50,17 @@ def setup_kokoro_models():
         print("   Models are now cached and ready to use")
 
         # Show cache location
-        cache_dir = Path.home() / ".cache" / "kokoro"
-        if cache_dir.exists():
-            model_files = list(cache_dir.rglob("*"))
+        model_cache = cache_dir / "models--hexgrad--Kokoro-82M"
+        if model_cache.exists():
+            model_files = list(model_cache.rglob("*"))
             total_size = sum(f.stat().st_size for f in model_files if f.is_file())
-            print(f"\n📁 Cache location: {cache_dir}")
+            print(f"\n📁 Cache location: {model_cache}")
             print(f"   Total size: {total_size / 1024 / 1024:.1f} MB")
 
         print("\n" + "=" * 60)
         print("✨ Kokoro TTS setup complete!")
         print("\nYou can now start the server with:")
-        print("   uvicorn src.main:app --host 0.0.0.0 --port 8000")
+        print("   uvicorn src.main:app --host 127.0.0.1 --port 8000")
 
         return True
 
@@ -76,8 +81,8 @@ if __name__ == "__main__":
     print("\n🎙️  Open Mobile TTS - Model Setup\n")
 
     # Check Python version
-    if sys.version_info < (3, 9) or sys.version_info >= (3, 13):
-        print("❌ Python 3.9-3.12 required")
+    if sys.version_info < (3, 10) or sys.version_info >= (3, 13):
+        print("❌ Python 3.10-3.12 required")
         print(f"   Current version: {sys.version}")
         sys.exit(1)
 
