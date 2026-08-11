@@ -97,7 +97,8 @@ uploads/
 
 # Model cache
 .cache/
-models/
+models/*
+!models/model-catalog.v1.json
 
 # Logs
 logs/

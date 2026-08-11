@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-08-11",
+  "models": [
+    {
+      "id": "hexgrad-kokoro-82m-pytorch",
+      "label": "Kokoro 82M (PyTorch)",
+      "family": "Kokoro",
+      "version": "1.0",
+      "precision": "FP32",
+      "role": "tts",
+      "runtime": {
+        "name": "kokoro-pytorch",
+        "minimum_version": "0.9.4"
+      },
+      "source": {
+        "url": "https://huggingface.co/hexgrad/Kokoro-82M",
+        "revision": null
+      },
+      "license": {
+        "weights": "Apache-2.0",
+        "archive": "Apache-2.0",
+        "voices": "Apache-2.0 package grant; no separate per-voice manifest is published"
+      },
+      "distribution": "downloaded by huggingface_hub at first use; not bundled",
+      "platforms": ["desktop"],
+      "supported_languages": ["en-us", "en-gb"],
+      "verified_languages": ["en-us"],
+      "exposed_languages": ["en-us"],
+      "archive_url": null,
+      "archive_bytes": null,
+      "installed_bytes": 329318400,
+      "sha256": null,
+      "integrity_status": "upstream revision is not pinned by the application",
+      "required_files": ["config.json", "kokoro-v1_0.pth"],
+      "required_directories": ["voices"],
+      "minimum_app_version": "3.1.0-dev",
+      "smoke_test": "Initialize KPipeline and generate non-empty 24 kHz audio with af_heart",
+      "migration": "Keep the existing Hugging Face cache until a pinned replacement loads",
+      "rollback": "Select the prior application version; cached upstream files are not deleted automatically"
+    },
+    {
+      "id": "kokoro-multi-lang-v1_0",
+      "label": "Kokoro v1.0 (sherpa-onnx)",
+      "family": "Kokoro",
+      "version": "1.0",
+      "precision": "FP32",
+      "role": "tts",
+      "runtime": {
+        "name": "sherpa-onnx",
+        "minimum_version": "1.13.4"
+      },
+      "source": {
+        "url": "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html",
+        "revision": "sherpa-onnx tts-models release archive"
+      },
+      "license": {
+        "weights": "Apache-2.0",
+        "archive": "Apache-2.0 LICENSE included at archive root",
+        "voices": "Apache-2.0 package grant; no separate per-voice manifest is included"
+      },
+      "distribution": "runtime download; not bundled in the Android APK",
+      "platforms": ["desktop", "android", "ios-planned"],
+      "supported_languages": ["en-us", "en-gb", "zh"],
+      "verified_languages": ["en-us", "en-gb"],
+      "exposed_languages": ["en-us", "en-gb"],
+      "package_speakers": 53,
+      "exposed_speakers": 28,
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+      "archive_bytes": 349418188,
+      "installed_bytes": 400786089,
+      "sha256": "c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046",
+      "integrity_status": "archive size and SHA-256 pinned",
+      "required_files": [
+        "LICENSE",
+        "model.onnx",
+        "voices.bin",
+        "tokens.txt",
+        "lexicon-us-en.txt",
+        "lexicon-gb-en.txt",
+        "lexicon-zh.txt"
+      ],
+      "required_directories": ["dict", "espeak-ng-data"],
+      "minimum_app_version": "3.1.0-dev",
+      "smoke_test": "After integrity-checked installation, activate in a clean Android process and generate intelligible full-duration audio with af_heart",
+      "migration": "Keep the installed model, persist selection, and load it only after a clean app restart",
+      "rollback": "Select the prior installed model and restart into a clean process"
+    },
+    {
+      "id": "kitten-mini-en-v0_8",
+      "label": "Kitten Mini v0.8",
+      "family": "KittenTTS",
+      "version": "0.8",
+      "precision": "FP32",
+      "role": "tts",
+      "status": "experimental",
+      "runtime": {
+        "name": "sherpa-onnx",
+        "minimum_version": "1.13.4"
+      },
+      "source": {
+        "url": "https://huggingface.co/KittenML/kitten-tts-mini-0.8",
+        "revision": "sherpa-onnx tts-models release archive"
+      },
+      "license": {
+        "weights": "Apache-2.0",
+        "archive": "Apache-2.0 LICENSE included at archive root",
+        "voices": "Apache-2.0 package grant; no separate per-voice manifest is included"
+      },
+      "distribution": "optional runtime download; not bundled in the Android APK",
+      "platforms": ["android"],
+      "supported_languages": ["en"],
+      "verified_languages": ["en"],
+      "exposed_languages": ["en-us"],
+      "package_speakers": 8,
+      "exposed_speakers": 8,
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-mini-en-v0_8.tar.bz2",
+      "archive_bytes": 67547594,
+      "installed_bytes": 99550582,
+      "sha256": "518f9b130320f690d5b5476df77bde4215fca67773cda16710318e5081234b9d",
+      "integrity_status": "archive size and SHA-256 pinned",
+      "required_files": ["LICENSE", "model.onnx", "voices.bin", "tokens.txt"],
+      "required_directories": ["espeak-ng-data"],
+      "minimum_app_version": "3.1.0-dev",
+      "smoke_test": "After integrity-checked installation, activate in a clean Android process and generate intelligible full-duration audio with Bella",
+      "migration": "Install only after explicit opt-in; persist selection and load it after a clean app restart",
+      "rollback": "Select installed Kokoro and restart into a clean process"
+    },
+    {
+      "id": "kitten-micro-en-v0_8",
+      "label": "Kitten Micro v0.8",
+      "family": "KittenTTS",
+      "version": "0.8",
+      "precision": "FP32",
+      "role": "tts",
+      "status": "experimental",
+      "runtime": {
+        "name": "sherpa-onnx",
+        "minimum_version": "1.13.4"
+      },
+      "source": {
+        "url": "https://huggingface.co/KittenML/kitten-tts-micro-0.8",
+        "revision": "sherpa-onnx tts-models release archive"
+      },
+      "license": {
+        "weights": "Apache-2.0",
+        "archive": "Apache-2.0 LICENSE included at archive root",
+        "voices": "Apache-2.0 package grant; no separate per-voice manifest is included"
+      },
+      "distribution": "optional runtime download; not bundled in the Android APK",
+      "platforms": ["android"],
+      "supported_languages": ["en"],
+      "verified_languages": ["en"],
+      "exposed_languages": ["en-us"],
+      "package_speakers": 8,
+      "exposed_speakers": 8,
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-micro-en-v0_8.tar.bz2",
+      "archive_bytes": 44423643,
+      "installed_bytes": 62667538,
+      "sha256": "85faaea7511ca9d1d2f251fed0a4553bdf0d1ee046102fa60ddd8046c751f76f",
+      "integrity_status": "archive size and SHA-256 pinned",
+      "required_files": ["LICENSE", "model.onnx", "voices.bin", "tokens.txt"],
+      "required_directories": ["espeak-ng-data"],
+      "minimum_app_version": "3.1.0-dev",
+      "smoke_test": "After integrity-checked installation, activate in a clean Android process and generate intelligible full-duration audio with Bella",
+      "migration": "Install only after explicit opt-in; persist selection and load it after a clean app restart",
+      "rollback": "Select installed Kokoro and restart into a clean process"
+    },
+    {
+      "id": "sherpa-onnx-moonshine-base-en-int8",
+      "label": "Moonshine v1 Base (English, INT8)",
+      "family": "Moonshine",
+      "version": "v1 Base",
+      "precision": "INT8",
+      "role": "stt",
+      "runtime": {
+        "name": "sherpa-onnx",
+        "minimum_version": "1.13.4"
+      },
+      "source": {
+        "url": "https://k2-fsa.github.io/sherpa/onnx/moonshine/models.html",
+        "revision": "sherpa-onnx asr-models release archive"
+      },
+      "license": {
+        "weights": "MIT",
+        "archive": "MIT model terms with Apache-2.0 sherpa runtime",
+        "voices": "not applicable"
+      },
+      "distribution": "runtime download; not bundled in the Android APK",
+      "platforms": ["desktop", "android", "ios-planned"],
+      "supported_languages": ["en"],
+      "verified_languages": ["en"],
+      "exposed_languages": ["en"],
+      "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2",
+      "archive_bytes": 250807309,
+      "installed_bytes": 287755667,
+      "sha256": "21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e",
+      "integrity_status": "archive size and SHA-256 pinned",
+      "required_files": [
+        "preprocess.onnx",
+        "encode.int8.onnx",
+        "uncached_decode.int8.onnx",
+        "cached_decode.int8.onnx",
+        "tokens.txt"
+      ],
+      "required_directories": [],
+      "minimum_app_version": "3.1.0-dev",
+      "smoke_test": "Load OfflineRecognizer with the staged Moonshine model",
+      "migration": "Install only after explicit opt-in and staged load validation",
+      "rollback": "Restore the previous model directory if activation fails"
+    }
+  ]
+}
