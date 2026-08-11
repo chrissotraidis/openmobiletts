@@ -1,5 +1,5 @@
 """
-Speech-to-Text engine using Moonshine v2 via sherpa-onnx Python bindings.
+Speech-to-Text engine using Moonshine v1 Base via sherpa-onnx Python bindings.
 
 Provides batch transcription of audio files. The STT model is downloaded
 on first use if not already present.
@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+from .logging_config import preview_text
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,7 @@ def polish_transcript(text: str, sentences_per_paragraph: int = 4) -> str:
 
 
 class SttEngine:
-    """Moonshine v2 STT engine via sherpa-onnx."""
+    """Moonshine v1 Base English INT8 STT engine via sherpa-onnx."""
 
     SAMPLE_RATE = 16000
     MODEL_NAME = "sherpa-onnx-moonshine-base-en-int8"
@@ -108,7 +110,7 @@ class SttEngine:
         return self._recognizer is not None
 
     def init(self, model_dir: Optional[str] = None):
-        """Initialize the STT engine with Moonshine v2 model files."""
+        """Initialize the STT engine with Moonshine v1 Base model files."""
         if not HAS_SHERPA:
             raise RuntimeError("sherpa_onnx is not installed. Install with: pip install sherpa-onnx")
 
@@ -119,7 +121,7 @@ class SttEngine:
         if not model_path.exists():
             raise FileNotFoundError(f"STT model directory not found: {model_path}")
 
-        logger.info(f"Initializing Moonshine v2 STT from: {model_path}")
+        logger.info(f"Initializing Moonshine v1 Base STT from: {model_path}")
 
         # Discover actual filenames — INT8 models use ".int8.onnx" suffix
         import glob
@@ -159,7 +161,7 @@ class SttEngine:
             **moonshine_config,
         )
 
-        logger.info("Moonshine v2 STT engine initialized")
+        logger.info("Moonshine v1 Base STT engine initialized")
 
     # Moonshine is non-streaming and only reliably decodes ~30 s at a time.
     # Anything longer must be split into windows; pick 25 s with 1 s overlap
@@ -196,7 +198,9 @@ class SttEngine:
 
         if total <= chunk_size:
             text = self._decode_chunk(samples, sample_rate)
-            logger.info(f"Transcribed {total} samples → {len(text)} chars: {text[:100]}")
+            logger.info(
+                f"Transcribed {total} samples → {len(text)} chars: {preview_text(text, 100)}"
+            )
             return text
 
         pieces: list[str] = []
@@ -209,7 +213,8 @@ class SttEngine:
                 pieces.append(piece)
             chunk_idx += 1
             logger.info(
-                f"Chunk {chunk_idx}: samples[{start}:{end}] → {len(piece)} chars: {piece[:80]}"
+                f"Chunk {chunk_idx}: samples[{start}:{end}] → {len(piece)} chars: "
+                f"{preview_text(piece, 80)}"
             )
             if end >= total:
                 break
@@ -217,7 +222,8 @@ class SttEngine:
 
         text = _join_chunks(pieces)
         logger.info(
-            f"Transcribed {total} samples in {chunk_idx} chunks → {len(text)} chars: {text[:100]}"
+            f"Transcribed {total} samples in {chunk_idx} chunks → {len(text)} chars: "
+            f"{preview_text(text, 100)}"
         )
         return text
 

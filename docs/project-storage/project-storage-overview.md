@@ -1,81 +1,52 @@
-# Project Storage
+# Library Storage and Legacy Project APIs
 
-## What It Does
+## Visible product data
 
-Persistent local storage for user sessions — text, transcriptions, generation history. Each project is a folder with JSON metadata and text content. Includes auto-cleanup and data export.
+The shared client's History library is the user-visible source of truth:
 
-## Why It Matters
+- history metadata and text use browser `localStorage`;
+- generated audio and timing use IndexedDB keyed by history ID;
+- Settings reports entries, cached-audio count, and cached-audio bytes from
+  those same stores;
+- retention removes both an aged history entry and its cached audio; and
+- portable JSON backup includes history and portable preferences, but not
+  audio blobs or the server URL.
 
-Moves the app from ephemeral localStorage/IndexedDB to structured, portable project data. Enables history across sessions and data backup/portability.
+Restore validates the file and merges IDs additively. It does not silently
+replace the existing library. Each desktop or Android local origin has its own
+store; transfer requires explicit backup and restore.
 
-## Core Rules
+## Legacy compatibility surface
 
-- Format: JSON files, one folder per project (decided — [004](../decisions/004-json-over-sqlite.md))
-- Auto-cleanup: configurable in Settings (1 week / 2 weeks / 1 month / 3 months / Never), default 1 month (spec-stated)
-- App scans project folders on launch, deletes anything older than configured threshold (spec-stated)
-- Project metadata export: single JSON file with all project data (titles, dates, text, settings) — data portability feature (spec-stated)
-- Desktop projects stored in `~/.openmobilevoice/projects/` (spec-stated)
-- Android projects stored in app's files directory (spec-stated)
+Desktop and Android still implement `/api/projects*` JSON-folder APIs. The
+shared client does not create or read these projects, so they are not described
+as the History backup. They remain a compatibility surface pending a later
+removal or migration decision.
 
-### Folder Structure
+| Endpoint | Purpose |
+|---|---|
+| `GET/POST /api/projects` | Legacy list/create operations |
+| `GET/PUT/DELETE /api/projects/:id` | Legacy item operations |
+| `GET /api/projects/export` | Export legacy projects only |
+| `POST /api/projects/cleanup` | Clean legacy projects only |
 
-```
-/projects/
-  /proj_20260309_143022/
-    project.json        # metadata: title, created, modified, type
-    content.txt         # the text content
-    /audio/             # generated audio files (optional)
-      generation_1.aac
-```
+## Retention and backup rules
 
-### Storage Budget
-
-| Component | Size | When |
-|-----------|------|------|
-| APK | ~50 MB | Install |
-| TTS model (Kokoro INT8) | ~95 MB | First launch |
-| STT model (Moonshine v2 Medium) | ~250 MB | First launch (default) |
-| STT model (Moonshine v2 Small, optional) | ~100 MB | Alternative in Settings |
-| Project data | Variable | Ongoing (auto-cleaned) |
-| **Total (default)** | **~395 MB** | |
-| **Total (with Small STT instead)** | **~245 MB** | |
-
-## New API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `GET /api/projects` | GET | List all projects |
-| `POST /api/projects` | POST | Create a new project |
-| `GET /api/projects/:id` | GET | Get project details |
-| `PUT /api/projects/:id` | PUT | Update project content |
-| `DELETE /api/projects/:id` | DELETE | Delete a project |
-| `GET /api/projects/export` | GET | Export all project metadata as JSON |
-| `POST /api/projects/cleanup` | POST | Run auto-cleanup |
-
-## New Code
-
-### Android (Kotlin)
-
-- **ProjectStorage.kt** — CRUD operations on JSON project folders. Auto-cleanup on launch. Export serialization.
-
-### Desktop (Python)
-
-- **project_storage.py** — Same JSON schema and folder structure as Android. Configurable directory.
-
-### Frontend (SvelteKit)
-
-- **StorageSettings.svelte** — Auto-cleanup interval selector, storage usage display, Export All Projects button, STT model selector with download.
-
-## What's Assumed
-
-- 10-20 projects is typical usage — JSON is plenty at this scale (spec-stated) — Risk if wrong: Low (can migrate to SQLite later)
-- Users want temporary storage (days/weeks), not archival — Risk if wrong: Low (auto-cleanup is configurable)
-
-## Key References
-
-- **Source spec:** `docs/EXPANSION-PLAN-OPEN-MOBILE-VOICE.md`, section "Project Storage"
-- **Decision:** [004-json-over-sqlite.md](../decisions/004-json-over-sqlite.md)
+- Default retention is 30 days; choices include 7, 14, 30, 90 days, or Never.
+- Changing retention runs client-library cleanup immediately.
+- Backup excludes cached audio to avoid multi-hundred-megabyte base64 JSON on
+  phones. Audio remains downloadable per History entry.
+- Server connection settings are intentionally device-local and excluded.
+- A backup file identifies itself as `openmobiletts-library` with a schema
+  version before restore accepts it.
 
 ## Status
 
-🔵 Not Started
+🟡 Implemented for the visible client library. Automated browser checks cover
+backup/retention states and the Settings ownership contract; large libraries,
+IndexedDB quota errors, corrupt backups, and cross-device restore still need
+manual/device acceptance.
+
+See decision
+[014](../decisions/014-client-library-is-the-visible-data-source.md) and the
+[data management overview](../data-management/overview.md).

@@ -9,6 +9,8 @@ from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from typing import List
 
+from .app_info import APP_VERSION
+
 # Log directory
 LOG_DIR = os.getenv("LOG_DIR", "/tmp/openmobiletts_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -21,6 +23,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Log retention (days)
 LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "7"))
+
+# Raw user text is sensitive. Operators must explicitly opt into content previews.
+LOG_CONTENT_PREVIEWS = os.getenv("LOG_CONTENT_PREVIEWS", "false").lower() in {
+    "1", "true", "yes", "on"
+}
 
 
 def setup_logging():
@@ -83,6 +90,8 @@ def preview_text(text: str, max_len: int = 200) -> str:
     Returns:
         Truncated text with ellipsis if needed
     """
+    if not LOG_CONTENT_PREVIEWS:
+        return f"<redacted: {len(text)} chars>"
     if len(text) <= max_len:
         return repr(text)
     return repr(text[:max_len]) + f"... ({len(text)} chars total)"
@@ -202,7 +211,7 @@ def export_logs_json(max_lines: int = 1000) -> dict:
 
     return {
         'exported_at': datetime.now().isoformat(),
-        'app_version': '1.0.0',
+        'app_version': APP_VERSION,
         'log_level': LOG_LEVEL,
         'entry_count': len(entries),
         'entries': entries,

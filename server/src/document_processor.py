@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-import fitz  # PyMuPDF - for memory-efficient page-by-page extraction
+import pymupdf as fitz  # PyMuPDF - for memory-efficient page-by-page extraction
 from docx import Document
 
 from .logging_config import get_logger, preview_text

@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Wraps Sherpa-ONNX OfflineRecognizer (Moonshine v2) with suspend functions.
+ * Wraps Sherpa-ONNX OfflineRecognizer (Moonshine v1 Base English INT8).
  *
  * Mirrors TtsManager's structure: two Mutex locks for init and transcribe,
  * coroutine-based, IO dispatcher. Model files must be downloaded before [init].
@@ -24,6 +24,8 @@ class SttManager {
     companion object {
         private const val TAG = "SttManager"
         const val SAMPLE_RATE = 16000
+        private const val WINDOW_SECONDS = 25
+        private const val OVERLAP_SECONDS = 1
     }
 
     private val initMutex = Mutex()
@@ -36,7 +38,7 @@ class SttManager {
         get() = recognizer != null
 
     /**
-     * Initialize the STT engine with Moonshine v2 model files at [modelDir].
+     * Initialize the STT engine with Moonshine v1 Base model files at [modelDir].
      * Must be called from a coroutine (runs on IO dispatcher).
      * Uses a Mutex to prevent double-init from concurrent requests.
      */
@@ -92,7 +94,7 @@ class SttManager {
                 )
 
                 recognizer = OfflineRecognizer(config = config)
-                AppLog.i(TAG, "STT engine initialized successfully (Moonshine v2)")
+                AppLog.i(TAG, "STT engine initialized successfully (Moonshine v1 Base)")
             }
         }
     }
@@ -113,21 +115,69 @@ class SttManager {
         transcribeMutex.withLock {
             val engine = recognizer ?: throw IllegalStateException("STT not initialized")
 
-            AppLog.i(TAG, "Transcribing ${samples.size} samples (${samples.size / sampleRate}s audio)")
-
-            val stream = engine.createStream()
-            try {
-                stream.acceptWaveform(samples, sampleRate)
-                engine.decode(stream)
-                val result = engine.getResult(stream)
-
-                AppLog.i(TAG, "Transcription result: ${result.text.take(100)}")
-                result.text.trim()
-            } finally {
-                stream.release()
+            require(sampleRate == SAMPLE_RATE) { "STT input must be 16 kHz mono PCM" }
+            require(samples.size <= AudioDecoder.MAX_DURATION_SECONDS * sampleRate) {
+                "Audio is longer than the ${AudioDecoder.MAX_DURATION_SECONDS / 60}-minute Android limit"
             }
+
+            AppLog.i(TAG, "Transcribing ${samples.size} samples (${samples.size / sampleRate}s audio)")
+            val windowSamples = WINDOW_SECONDS * sampleRate
+            val overlapSamples = OVERLAP_SECONDS * sampleRate
+            var start = 0
+            var transcript = ""
+            var windowCount = 0
+            while (start < samples.size) {
+                val end = minOf(start + windowSamples, samples.size)
+                val window = if (start == 0 && end == samples.size) {
+                    samples
+                } else {
+                    samples.copyOfRange(start, end)
+                }
+                transcript = mergeTranscript(transcript, transcribeWindow(engine, window, sampleRate))
+                windowCount += 1
+                if (end == samples.size) break
+                start = end - overlapSamples
+            }
+            AppLog.i(TAG, "Transcription completed: windows=$windowCount, characters=${transcript.length}")
+            transcript
         }
     }
+
+    private fun transcribeWindow(
+        engine: OfflineRecognizer,
+        samples: FloatArray,
+        sampleRate: Int,
+    ): String {
+        val stream = engine.createStream()
+        return try {
+            stream.acceptWaveform(samples, sampleRate)
+            engine.decode(stream)
+            engine.getResult(stream).text.trim()
+        } finally {
+            stream.release()
+        }
+    }
+
+    internal fun mergeTranscript(existing: String, next: String): String {
+        if (existing.isBlank()) return next.trim()
+        if (next.isBlank()) return existing.trim()
+        val left = existing.trim().split(Regex("\\s+"))
+        val right = next.trim().split(Regex("\\s+"))
+        val maxOverlap = minOf(12, left.size, right.size)
+        var overlap = 0
+        for (size in maxOverlap downTo 1) {
+            val leftTail = left.takeLast(size).map(::normalizeWord)
+            val rightHead = right.take(size).map(::normalizeWord)
+            if (leftTail == rightHead) {
+                overlap = size
+                break
+            }
+        }
+        return (left + right.drop(overlap)).joinToString(" ").trim()
+    }
+
+    private fun normalizeWord(value: String): String =
+        value.lowercase().replace(Regex("[^\\p{L}\\p{N}']"), "")
 
     fun release() {
         // Block until any in-progress transcription completes before freeing native memory

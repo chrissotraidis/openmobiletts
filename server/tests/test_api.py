@@ -6,6 +6,8 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from src.app_info import APP_NAME, APP_VERSION
+from src.model_catalog import STT_MODEL
 from src.main import app
 
 
@@ -22,10 +24,106 @@ class TestAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
-        assert "version" in data
+        assert data["name"] == APP_NAME
+        assert data["version"] == APP_VERSION
 
-    def test_voices(self):
+    def test_desktop_capability_contract(self):
+        response = self.client.get("/api/capabilities")
+        assert response.status_code == 200
+        assert response.json() == {
+            "schema_version": 1,
+            "platform": "desktop",
+            "features": {
+                "tts": True,
+                "stt": True,
+                "batch_transcription": True,
+                "engine_switching": True,
+                "document_import": True,
+                "audio_import": True,
+                "model_download": True,
+                "model_catalog": True,
+                "project_storage": True,
+                "exports": True,
+                "logs": True,
+            },
+        }
+
+    def test_shared_model_catalog_contract(self):
+        response = self.client.get("/api/models/catalog")
+        assert response.status_code == 200
+        catalog = response.json()
+        assert catalog["schema_version"] == 1
+        by_id = {entry["id"]: entry for entry in catalog["models"]}
+        assert by_id[STT_MODEL.model_id]["precision"] == "INT8"
+        assert by_id["kokoro-multi-lang-v1_0"]["exposed_languages"] == [
+            "en-us",
+            "en-gb",
+        ]
+
+    @pytest.mark.parametrize("method", ["get", "post"])
+    def test_unknown_api_route_returns_json_404(self, method):
+        response = getattr(self.client, method)("/api/not-a-real-route")
+        assert response.status_code == 404
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json() == {"detail": "Not found"}
+
+    def test_stt_model_status_uses_real_model_identity(self):
+        """The API must not describe Moonshine v1 Base as v2 Medium."""
+        response = self.client.get("/api/stt/models")
+        assert response.status_code == 200
+        model = response.json()["models"][0]
+        assert model["id"] == STT_MODEL.model_id
+        assert model["label"] == "Moonshine v1 Base (English, INT8)"
+        assert model["version"] == "v1 Base"
+        assert model["precision"] == "INT8"
+        assert model["languages"] == ["en"]
+        assert model["archive_size_mb"] == STT_MODEL.archive_size_mb
+
+    def test_stt_model_download_rejects_unknown_model(self):
+        response = self.client.post(
+            "/api/stt/models/download",
+            json={"model": "moonshine-v2-medium"},
+        )
+        assert response.status_code == 404
+
+    def test_stt_model_download_starts_background_installer(self, monkeypatch):
+        calls = []
+
+        monkeypatch.setattr("src.main.is_model_complete", lambda *args: False)
+        monkeypatch.setattr(
+            "src.main.stt_model_installer.start",
+            lambda spec, **kwargs: calls.append((spec, kwargs)) or {"id": spec.model_id},
+        )
+
+        response = self.client.post(
+            "/api/stt/models/download",
+            json={"model": STT_MODEL.model_id},
+        )
+
+        assert response.status_code == 202
+        assert response.json()["status"] == "started"
+        assert calls[0][0] == STT_MODEL
+        assert callable(calls[0][1]["validate"])
+        assert callable(calls[0][1]["on_activated"])
+
+    def test_voices(self, monkeypatch):
         """Test voices endpoint returns a list of voices."""
+        class FakeVoiceEngine:
+            available_voices = [
+                {
+                    "name": "test_voice",
+                    "language": "en-us",
+                    "language_name": "English (US)",
+                    "gender": "female",
+                    "display_name": "Test Voice",
+                }
+            ]
+
+        class FakeEngineManager:
+            active = FakeVoiceEngine()
+
+        monkeypatch.setattr("src.main.engine_manager", FakeEngineManager())
+
         response = self.client.get("/api/voices")
         assert response.status_code == 200
         data = response.json()

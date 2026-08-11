@@ -1,8 +1,8 @@
 /**
  * History store — persists recent TTS generations to localStorage.
  */
-import { writable } from 'svelte/store';
-import { removeCachedAudio, clearAudioCache } from '$lib/services/audioCache';
+import { get, writable } from 'svelte/store';
+import { removeCachedAudio, removeCachedAudioMany, clearAudioCache } from '$lib/services/audioCache';
 
 const STORAGE_KEY = 'openmobiletts_history';
 const MAX_ENTRIES = 50;
@@ -24,7 +24,8 @@ function saveHistory(entries) {
 let idCounter = 0;
 
 function createHistoryStore() {
-	const { subscribe, set, update } = writable(loadHistory());
+	const store = writable(loadHistory());
+	const { subscribe, set, update } = store;
 
 	return {
 		subscribe,
@@ -67,6 +68,41 @@ function createHistoryStore() {
 				saveHistory(next);
 				return next;
 			});
+		},
+
+		/** Return a snapshot of the visible library. */
+		getEntries() {
+			return get(store);
+		},
+
+		/** Merge validated backup entries without clearing current work. */
+		mergeEntries(importedEntries) {
+			const current = get(store);
+			const byId = new Map(current.map((entry) => [entry.id, entry]));
+			for (const entry of importedEntries) byId.set(entry.id, entry);
+			const next = [...byId.values()]
+				.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+				.slice(0, MAX_ENTRIES);
+			set(next);
+			saveHistory(next);
+			return next.length;
+		},
+
+		/** Remove entries older than the configured retention period. */
+		async cleanupOlderThan(days) {
+			if (!Number.isFinite(days) || days <= 0) return 0;
+			const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+			const current = get(store);
+			const removedIds = current
+				.filter((entry) => Date.parse(entry.createdAt) < cutoff)
+				.map((entry) => entry.id);
+			if (removedIds.length === 0) return 0;
+			const removed = new Set(removedIds);
+			const next = current.filter((entry) => !removed.has(entry.id));
+			set(next);
+			saveHistory(next);
+			await removeCachedAudioMany(removedIds);
+			return removedIds.length;
 		},
 
 		remove(id) {

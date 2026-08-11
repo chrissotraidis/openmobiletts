@@ -1,0 +1,22 @@
+[
+  {
+    "id": "short-ui",
+    "text": "Open Mobile TTS keeps your voice work private and on your device."
+  },
+  {
+    "id": "numbers-dates",
+    "text": "Your appointment is on August 21st, 2026 at 10:45 AM. The total is $1,234.56."
+  },
+  {
+    "id": "names-abbreviations",
+    "text": "Dr. Nguyen sent the CPU and API results to São Paulo, Edinburgh, and Reykjavík."
+  },
+  {
+    "id": "url-punctuation",
+    "text": "Visit example dot org slash docs. Wait—did it pause correctly? Yes; it did."
+  },
+  {
+    "id": "long-form",
+    "text": "A good local voice tool should remain calm and predictable during long passages. It should pronounce names, dates, numbers, and abbreviations consistently. It should also recover from interruptions without repeating or skipping a sentence. This paragraph is intentionally longer so generation crosses normal sentence boundaries and exposes chunking behavior."
+  }
+]

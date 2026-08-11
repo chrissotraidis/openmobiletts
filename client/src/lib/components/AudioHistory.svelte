@@ -282,8 +282,7 @@
 
 	function formatDate(iso) {
 		const d = new Date(iso);
-		const now = new Date();
-		const diff = now - d;
+		const diff = Date.now() - d.getTime();
 
 		if (diff < 60000) return 'Just now';
 		if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
@@ -294,15 +293,18 @@
 
 <!-- Clear All Confirmation Modal -->
 {#if showClearModal}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick={() => showClearModal = false}>
-		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) showClearModal = false; }}
+		onkeydown={(e) => { if (e.key === 'Escape') showClearModal = false; }}
+	>
+		<div role="dialog" aria-modal="true" aria-labelledby="clear-history-title" class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
 			<div class="flex items-center gap-3 mb-4">
 				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
 					<AlertTriangle size={20} class="text-red-400" />
 				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Clear History</h3>
+				<h3 id="clear-history-title" class="text-lg font-semibold text-slate-200">Clear History</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-6">
 				This will permanently delete all {history.length} entr{history.length !== 1 ? 'ies' : 'y'} and their cached audio. This action cannot be undone.
@@ -327,15 +329,18 @@
 
 <!-- Delete Single Entry Confirmation Modal -->
 {#if showDeleteModal && pendingDeleteEntry}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick={() => { showDeleteModal = false; pendingDeleteEntry = null; }}>
-		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) { showDeleteModal = false; pendingDeleteEntry = null; } }}
+		onkeydown={(e) => { if (e.key === 'Escape') { showDeleteModal = false; pendingDeleteEntry = null; } }}
+	>
+		<div role="dialog" aria-modal="true" aria-labelledby="delete-entry-title" class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
 			<div class="flex items-center gap-3 mb-4">
 				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
 					<AlertTriangle size={20} class="text-red-400" />
 				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Delete Entry?</h3>
+				<h3 id="delete-entry-title" class="text-lg font-semibold text-slate-200">Delete Entry?</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-2">
 				This will permanently delete this entry and its cached audio.
@@ -608,6 +613,7 @@
 	.line-clamp-2 {
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 	}

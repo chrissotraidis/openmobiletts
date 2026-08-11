@@ -6,4 +6,14 @@
         <item name="android:navigationBarColor">#0a0c10</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <style name="Theme.OpenMobileTTS.Restart" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0a0c10</item>
+        <item name="android:colorAccent">#3b82f6</item>
+        <item name="android:statusBarColor">#0a0c10</item>
+        <item name="android:navigationBarColor">#0a0c10</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

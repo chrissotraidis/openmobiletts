@@ -8,8 +8,8 @@
 # --- Stage 1: Build the SvelteKit client ---
 FROM node:20-slim AS client-builder
 WORKDIR /app/client
-COPY client/package.json client/package-lock.json* ./
-RUN npm install
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
 COPY client/ ./
 RUN npm run build
 
@@ -24,9 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+COPY VERSION ./VERSION
+COPY models/ ./models/
+
 # Install Python dependencies
-COPY server/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY server/requirements.lock ./requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Copy server code
 COPY server/src/ ./src/
@@ -42,6 +45,7 @@ ENV HOST=0.0.0.0
 ENV PORT=8000
 ENV WORKERS=1
 ENV STATIC_DIR=/app/client-build
+ENV HF_HOME=/root/.cache/huggingface
 
 EXPOSE 8000
 

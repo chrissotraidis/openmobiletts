@@ -139,15 +139,18 @@
 
 <!-- Cancel Confirmation Modal -->
 {#if showCancelConfirm}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick={() => showCancelConfirm = false}>
-		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl" onclick={(e) => e.stopPropagation()}>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) showCancelConfirm = false; }}
+		onkeydown={(e) => { if (e.key === 'Escape') showCancelConfirm = false; }}
+	>
+		<div role="dialog" aria-modal="true" aria-labelledby="cancel-generation-title" class="bg-[#0f1218] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
 			<div class="flex items-center gap-3 mb-4">
 				<div class="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center">
 					<AlertTriangle size={20} class="text-red-400" />
 				</div>
-				<h3 class="text-lg font-semibold text-slate-200">Cancel Generation?</h3>
+				<h3 id="cancel-generation-title" class="text-lg font-semibold text-slate-200">Cancel Generation?</h3>
 			</div>
 			<p class="text-sm text-slate-400 mb-2">
 				This will stop the current generation and discard all progress.

@@ -36,6 +36,49 @@
 		@apply bg-white/5 text-slate-300 hover:bg-white/10;
 	}
 
+	.settings-category {
+		@apply min-h-[56px] min-w-[44px] rounded-xl flex flex-col items-center justify-center gap-1;
+		@apply text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors;
+	}
+
+	.settings-category span {
+		@apply min-w-0 flex flex-col items-center;
+	}
+
+	.settings-category strong {
+		@apply text-[10px] font-semibold leading-tight;
+	}
+
+	.settings-category small {
+		@apply hidden;
+	}
+
+	.settings-category-active {
+		@apply bg-blue-600/15 text-blue-400;
+	}
+
+	@media (min-width: 1024px) {
+		.settings-category {
+			@apply w-full min-h-[52px] flex-row justify-start gap-3 px-3 text-left;
+		}
+
+		.settings-category span {
+			@apply items-start;
+		}
+
+		.settings-category strong {
+			@apply text-sm;
+		}
+
+		.settings-category small {
+			@apply block text-[10px] text-slate-600 mt-0.5;
+		}
+
+		.settings-category-active small {
+			@apply text-blue-300/60;
+		}
+	}
+
 	/* Form inputs optimized for mobile */
 	.input {
 		@apply w-full px-4 py-3 rounded-xl border border-white/10 bg-slate-900/40;
@@ -100,5 +143,20 @@
 	}
 	select option {
 		@apply bg-slate-900 text-slate-200;
+	}
+}
+
+@keyframes settings-panel-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-panel > * {
+	animation: settings-panel-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.settings-panel > * {
+		animation: none;
 	}
 }

@@ -15,7 +15,10 @@ from .tts_backend import TTSBackend
 # Thread pool for parallel encoding (matches KokoroBackend pattern)
 _encoder_pool = ThreadPoolExecutor(max_workers=2)
 
-# Voice name → speaker ID mapping for kokoro-multi-lang-v1_0
+# Product-accepted English speaker IDs from kokoro-multi-lang-v1_0.
+# The archive contains 53 speaker embeddings, but prefixes alone do not prove
+# language support. Chinese and other language surfaces stay hidden pending
+# normalization and hands-on acceptance (Decision 017).
 _VOICE_TO_SID = {
     'af_alloy': 0, 'af_aoede': 1, 'af_bella': 2, 'af_heart': 3,
     'af_jessica': 4, 'af_kore': 5, 'af_nicole': 6, 'af_nova': 7,
@@ -25,28 +28,12 @@ _VOICE_TO_SID = {
     'am_santa': 19,
     'bf_alice': 20, 'bf_emma': 21, 'bf_isabella': 22, 'bf_lily': 23,
     'bm_daniel': 24, 'bm_fable': 25, 'bm_george': 26, 'bm_lewis': 27,
-    'ef_dora': 28, 'em_alex': 29,
-    'ff_siwis': 30,
-    'hf_alpha': 31, 'hf_beta': 32, 'hm_omega': 33, 'hm_psi': 34,
-    'if_sara': 35, 'im_nicola': 36,
-    'jf_alpha': 37, 'jf_gongitsune': 38, 'jf_nezumi': 39, 'jf_tebukuro': 40,
-    'jm_kumo': 41,
-    'pf_dora': 42, 'pm_alex': 43, 'pm_santa': 44,
-    'zf_xiaobei': 45, 'zf_xiaoni': 46, 'zf_xiaoxiao': 47, 'zf_xiaoyi': 48,
-    'zm_yunjian': 49, 'zm_yunxi': 50, 'zm_yunxia': 51, 'zm_yunyang': 52,
 }
 
 # Language prefix → (language_code, language_name)
 _LANG_MAP = {
     'a': ('en-us', 'English (US)'),
     'b': ('en-gb', 'English (UK)'),
-    'e': ('es', 'Spanish'),
-    'f': ('fr', 'French'),
-    'h': ('hi', 'Hindi'),
-    'i': ('it', 'Italian'),
-    'j': ('ja', 'Japanese'),
-    'p': ('pt-br', 'Portuguese'),
-    'z': ('zh', 'Chinese'),
 }
 
 
@@ -68,12 +55,12 @@ class SherpaOnnxBackend(TTSBackend):
             )
 
         # Build lexicon path — multi-lang models require it
-        lexicon_path = ""
-        for candidate in ["lexicon-us-en.txt", "lexicon.txt"]:
-            p = model_dir / candidate
-            if p.exists():
-                lexicon_path = str(p)
-                break
+        lexicon_files = [
+            model_dir / name
+            for name in ("lexicon-us-en.txt", "lexicon-gb-en.txt")
+            if (model_dir / name).exists()
+        ]
+        lexicon_path = ",".join(str(path) for path in lexicon_files)
 
         # Build dict dir path if present (for multi-lang jieba tokenizer)
         dict_dir = ""

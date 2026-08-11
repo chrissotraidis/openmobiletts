@@ -1,98 +1,77 @@
 # Android App
 
-## What It Does
+## Current architecture
 
-Runs the same SvelteKit web app in an Android WebView, backed by an embedded NanoHTTPD server that bridges API calls to on-device Sherpa-ONNX engines. Fully local after model download — no external server needed.
+Android packages the same SvelteKit interface as the desktop app. A WebView
+loads it from an in-process NanoHTTPD server on `127.0.0.1:8080`; Kotlin owns
+local TTS/STT inference, files, model delivery, audio encoding, notifications,
+media controls, and the JavaScript bridge. No Compose UI or external inference
+server is required.
 
-## Why It Matters
+The WebView and native server publish the same schema-v1 platform capability
+contract. Unsupported desktop-only actions, including batch transcription and
+unsupported controls are hidden rather than allowed to fail. Engine switching
+is exposed for installed Kokoro and experimental Kitten Mini/Micro models.
 
-Enables the app to run entirely on a phone with no desktop server. Same UI, same features, fully offline after initial setup.
+The native Activity remains edge-to-edge on current Android versions, but it
+applies status-bar, navigation-bar, and display-cutout insets to both the
+first-run model screen and shared WebView. System UI must never overlap the app
+header, controls, or bottom navigation.
 
-## Core Rules
+Navigation, microphone permission, file picking, and the JavaScript bridge are
+restricted to the exact `http://127.0.0.1:8080` application origin. Android's
+network-security policy blocks cleartext traffic everywhere else; loopback is
+the single declared exception used by the in-process server.
 
-### Architecture
+## Build contract
 
-- WebView loads SvelteKit build from embedded NanoHTTPD on `127.0.0.1:8080` (code-derived)
-- NanoHTTPD serves both static files (SvelteKit build) and API endpoints (code-derived)
-- Sherpa-ONNX for on-device TTS inference via JNI (code-derived)
-- All UI is in SvelteKit — no Jetpack Compose code (decided — [005](../decisions/005-webview-over-compose.md))
-- `window.Android` bridge object indicates WebView context — use for feature detection (code-derived)
-- Server binds to `127.0.0.1` only — not network-accessible (code-derived)
+Gradle is the only supported asset/build path. It runs `npm ci`, builds the
+Svelte static output, packages it into the APK, resolves the official
+sherpa-onnx 1.13.4 AAR, and verifies dependency SHA-256 metadata. The project
+uses compile/target API 36, min API 26, AGP 8.10.1, Gradle 8.11.1, Java 17, and
+WorkManager 2.10.5. Manual asset-copy scripts are obsolete.
 
-### Job-Based Generation (Resilient to Stream Drops)
-
-- Each `/api/tts/stream` creates a `TtsJob`, immediately sends `JOB:{id}` to client (code-derived)
-- Generation thread writes audio to disk **before** streaming to client (code-derived)
-- On backgrounding: `player.js` detects `visibilitychange`, proactively aborts HTTP stream (code-derived)
-- Generation thread continues unaffected — no HTTP backpressure (code-derived)
-- Client enters recovery: polls `/api/tts/jobs/{id}/status` every 5s until complete (code-derived)
-- Client fetches complete audio from `/api/tts/jobs/{id}/audio` and timing from `/api/tts/jobs/{id}/timing` (code-derived)
-- Jobs auto-cleaned: 2-hour TTL after completion + purge on server restart (code-derived)
-
-### Notifications
-
-- Foreground service (`TtsService`) with two modes (code-derived):
-  - **Generation mode**: progress text ("Generating speech... 3/12 chunks"), progress updates bypass WebView via direct `TtsService.instance?.updateProgress()` call
-  - **Playback mode**: `MediaStyle` notification with play/pause/stop, lock screen + Bluetooth via `MediaSessionCompat`
-- Notification → WebView routing: `PendingIntent` → `TtsService.onStartCommand` → `playbackCommandCallback` → `webView.evaluateJavascript("window.__ttsControl?.play()")` (code-derived)
-
-### Model Download
-
-- First launch: downloads Kokoro INT8 model (~95 MB) from GitHub releases (code-derived)
-- v3.0: also downloads Moonshine v2 Small (~100 MB) — sequential download (spec-stated)
-- Optional: Moonshine v2 Medium (~250 MB) downloadable from Settings (spec-stated)
-- Zip Slip protection on model extraction (code-derived)
-
-### Build Workflow
-
-```bash
-# Bundle web app into Android assets:
-./android/copy-webapp.sh
-# Or manually:
-cd client && npm run build
-cp -r build android/app/src/main/assets/webapp/
-# Open android/ in Android Studio → Run
+```sh
+cd android
+./gradlew :app:assembleDebug --dependency-verification strict
 ```
 
-### Known Constraints
+## Model behavior
 
-- `npm run build` does NOT update Android — must copy to `android/app/src/main/assets/webapp/`
-- AAPT ignores `_*` directories — needs custom `aaptOptions` in build.gradle.kts
-- Cleartext HTTP requires `android:usesCleartextTraffic="true"` in AndroidManifest.xml
-- No `<input type="file">` without native `WebChromeClient.onShowFileChooser()`
-- Clean build required after asset changes
+- First use downloads only `kokoro-multi-lang-v1_0` (333.2 MiB archive).
+- Optional Settings download installs
+  `sherpa-onnx-moonshine-base-en-int8` (239.2 MiB archive).
+- The STT package is Moonshine v1 Base English INT8, not v2 Medium.
+- WorkManager owns durable foreground download work; partial archives can be
+  resumed and candidates are checksum-verified and staged.
 
-## Kotlin Source Files
+See [model download flow](model-download-flow.md) for acceptance boundaries.
 
-| File | Purpose |
-|------|---------|
-| `MainActivity.kt` | WebView host + model download UI + `@JavascriptInterface` bridge |
-| `TtsHttpServer.kt` | NanoHTTPD: API + static files + TtsJob + QueueInputStream |
-| `TtsManager.kt` | Sherpa-ONNX wrapper (Mutex-safe init, coroutine-based) |
-| `AacEncoder.kt` | PCM → AAC audio (hardware MediaCodec, ADTS framing) |
-| `WavEncoder.kt` | PCM → WAV conversion (fallback) |
-| `VoiceRegistry.kt` | Voice name → SID mapping |
-| `ModelDownloader.kt` | First-launch model download (Zip Slip protected) |
-| `TtsService.kt` | Foreground service: generation progress + media controls |
-| `AppLog.kt` | In-app log ring buffer |
-| `OpenMobileTtsApp.kt` | Application singleton: TtsManager + server lifecycle |
+## Resilient TTS generation
 
-## v3.0 New Kotlin Classes
+Each stream request creates a disk-backed job and returns a job ID. Native
+generation writes audio to disk independently of the HTTP consumer. If the
+WebView stream drops while backgrounded, the client polls job status and
+recovers completed audio and timing. Completed jobs have a bounded retention
+window.
 
-| File | Purpose |
-|------|---------|
-| `SttManager.kt` | Sherpa-ONNX `OfflineRecognizer` wrapper for Moonshine STT |
-| `AudioDecoder.kt` | MediaExtractor + MediaCodec → PCM for imported audio |
-| `ExportManager.kt` | PDF via PdfDocument, MD/TXT via file I/O |
-| `ProjectStorage.kt` | JSON project CRUD + auto-cleanup |
-| `ModelDownloader.kt (extended)` | Extended in-place for TTS + STT model downloads |
+## Native responsibilities
 
-## Key References
+| Area | Main implementation |
+|---|---|
+| WebView host, permissions, file chooser, bridge | `MainActivity.kt` |
+| Local HTTP API and static assets | `TtsHttpServer.kt` |
+| TTS/STT inference | `TtsManager.kt`, `SttManager.kt` |
+| Durable model delivery | `ModelDownloadWorker.kt`, `ModelDownloader.kt` |
+| Audio decode/encode | `AudioDecoder.kt`, `AacEncoder.kt`, `WavEncoder.kt` |
+| Documents and exports | `DocumentExtractor.kt`, `ExportManager.kt` |
+| Generation/playback notification | `TtsService.kt` |
+| Runtime/model identity | `models/model-catalog.v1.json`, `ModelCatalog.kt` |
 
-- **Full architecture:** `docs/ANDROID_ARCHITECTURE.md`
-- **JS-Native bridge:** `docs/ANDROID_ARCHITECTURE.md`, "JS ↔ Native Bridge Methods"
-- **Decision:** [005-webview-over-compose.md](../decisions/005-webview-over-compose.md)
+## Current status
 
-## Status
-
-🟢 Implemented (v2.0) — v3.0 additions (SttManager, AudioDecoder, ExportManager, ProjectStorage, ModelDownloader extension) are 🟡 In Progress
+🟡 Reproducible debug baseline. Strict assembly, APK asset/JNI audit, emulator
+update, data-preservation readback, cold launch, and API health passed on
+2026-08-10. Fresh model delivery, hands-on playback, background/thermal tests,
+physical-phone preservation, release signing, and store distribution remain
+separate acceptance gates.

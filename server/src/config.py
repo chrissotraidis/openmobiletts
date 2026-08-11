@@ -28,15 +28,23 @@ class Settings:
     )
     SHERPA_NUM_THREADS: int = int(os.getenv("SHERPA_NUM_THREADS", "2"))
 
+    # Desktop STT model storage
+    STT_MODEL_CACHE_DIR: str = os.getenv("STT_MODEL_CACHE_DIR", str(Path.home() / ".cache"))
+
     # Audio Encoding
     MP3_BITRATE: str = os.getenv("MP3_BITRATE", "64k")
     MP3_SAMPLE_RATE: int = int(os.getenv("MP3_SAMPLE_RATE", "22050"))
     MP3_CHANNELS: int = 1  # Mono for speech
 
     # Server
-    HOST: str = os.getenv("HOST", "0.0.0.0")
+    HOST: str = os.getenv("HOST", "127.0.0.1")
     PORT: int = int(os.getenv("PORT", "8000"))
     WORKERS: int = int(os.getenv("WORKERS", "1"))
+    CORS_ORIGINS: str = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000,"
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
 
     # File uploads
     MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))

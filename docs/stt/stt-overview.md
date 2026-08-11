@@ -1,76 +1,66 @@
 # Speech-to-Text (STT)
 
-## What It Does
+## Current product behavior
 
-On-device speech recognition that converts voice input to text using Moonshine v2. Users can dictate via microphone or import audio files for transcription. All inference happens on-device — no cloud, no network after model download.
+Open Mobile TTS can record or import audio, transcribe it locally, and place the
+result in the editable Generate text area. It does not send audio to a cloud
+service and it does not run an LLM over the transcript.
 
-## Why It Matters
+The current desktop and Android model is exactly:
 
-This is the headline v3.0 feature — transforms the app from a one-way TTS tool into a bidirectional voice-to-text platform. Users can dictate, edit, then export or listen back.
+| Field | Current value |
+|---|---|
+| Model ID | `sherpa-onnx-moonshine-base-en-int8` |
+| Family | Moonshine v1 Base |
+| Language | English |
+| Precision | INT8 |
+| Runtime | sherpa-onnx 1.13.4 on Android; sherpa-onnx Python on desktop |
+| Download | 250,807,309 bytes (239.2 MiB) |
+| Installed | 286,929,760 bytes (273.6 MiB) |
 
-## Core Rules
+This is **not Moonshine v2 Medium**. Decision
+[012](../decisions/012-current-moonshine-v1-baseline-and-v2-benchmark.md)
+keeps the current model as the measured baseline until newer candidates pass
+the same benchmark and device tests.
 
-- STT uses Moonshine v2, NOT Whisper (spec-stated — sherpa-onnx Whisper has accuracy regressions, GitHub issue #2900)
-- No LLM for transcript correction — Moonshine accuracy is sufficient; removes ~500 MB model dependency (decided — [002](../decisions/002-no-llm-transcript-correction.md))
-- Batch transcription only in v3.0 — record first, transcribe after. Streaming STT deferred (decided — [007](../decisions/007-batch-stt-before-streaming.md))
-- sherpa-onnx handles both TTS and STT — same framework, same .aar library, same Kotlin API pattern (spec-stated)
-- Microphone audio captured via WebView MediaRecorder API, POSTed to backend for transcription (spec-stated)
-- Output is plain text in the text area, immediately editable (spec-stated)
+## Core rules
 
-### Model Options by Platform
+- STT is optional. Android first run downloads only the required TTS model.
+- Android users install STT explicitly from Settings. The download is durable,
+  resumable when the host accepts HTTP Range, checksum-verified, staged, and
+  activated only after validation.
+- Desktop Settings starts a pinned background installer and reports progress.
+- Transcription is batch-oriented: record or import first, then transcribe.
+  Streaming partial transcripts remain a benchmark-driven future option.
+- Transcript polishing is deterministic paragraph formatting. No LLM
+  correction is enabled (decision [002](../decisions/002-no-llm-transcript-correction.md)).
+- The English-only limitation must be visible; unsupported multilingual claims
+  are not product capabilities.
 
-| Model | Params | Size | Avg WER | Latency | Platform |
-|-------|--------|------|---------|---------|----------|
-| Moonshine v2 Small | 123M | ~100 MB | 7.84% | 148ms | Android optional (lighter download) |
-| Moonshine v2 Medium | 245M | ~250 MB | 6.65% | 258ms | **Android default, Desktop default** |
-| Whisper Large v3 | 1.55B | ~3 GB | ~5% | ~2s | Desktop optional (future) |
+## API contract
 
-### Android Model Strategy
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/stt/transcribe` | POST | Transcribe one uploaded audio file |
+| `/api/stt/models` | GET | Report exact model identity, size, progress, and readiness |
+| `/api/stt/models/download` | POST | Start or resume the pinned optional model download |
+| `/api/stt/models/download/cancel` | POST | Pause the Android WorkManager download; the partial archive is retained |
 
-- Default download: Moonshine v2 Medium (~250 MB) — tested on Pixel 9 Pro with no speed difference vs Small, better accuracy (user-stated, validated 3/16/26)
-- Optional: Moonshine v2 Small (~100 MB) available in Settings for users who want a lighter download
-- Both TTS (~95 MB) and STT (~250 MB) models loaded simultaneously in RAM (~345 MB total) (decided — [006](../decisions/006-simultaneous-model-loading.md))
+Batch transcription is a desktop capability and is hidden on Android through
+the shared platform-capability contract.
 
-### Desktop Model Strategy
+## Model modernization
 
-- Default: Moonshine v2 Medium — desktop has the RAM and CPU for it (spec-stated)
-- Future option: Whisper Large v3 for maximum accuracy with GPU (spec-stated)
-
-## New API Endpoints
-
-| Endpoint | Method | Purpose | Request | Response |
-|----------|--------|---------|---------|----------|
-| `/api/stt/transcribe` | POST | Transcribe audio to text | Audio data (WAV/PCM) as multipart | `{text, duration_ms, model}` |
-| `/api/stt/models` | GET | List available STT models and download status | — | `{models: [{name, size, downloaded, active}]}` |
-| `/api/stt/models/download` | POST | Download an STT model | `{model: "moonshine-v2-medium"}` | `{status, progress}` |
-
-## New Code
-
-### Android (Kotlin)
-
-- **SttManager.kt** — Wraps sherpa-onnx `OfflineRecognizer` for Moonshine. Coroutine-based, Mutex-serialized, IO dispatcher (mirrors TtsManager pattern). Accepts PCM audio bytes, returns transcribed text.
-- **ModelDownloader.kt (extended)** — Extended in-place with `downloadSttModel()`, `isSttModelDownloaded()`, `getSttModelDir()` to download both TTS and STT models from GitHub releases. Sequential download on first launch.
-
-### Desktop (Python)
-
-- **stt_engine.py** — Moonshine STT via Python sherpa-onnx bindings. Creates `OfflineRecognizer`, accepts PCM audio, returns text.
-
-### Frontend (SvelteKit)
-
-- **MicButton.svelte** — Floating mic button on Generate tab. MediaRecorder API capture, recording state UI, POST to `/api/stt/transcribe`.
-- **SttProgress.svelte** — Progress indicator during transcription. Reuses GenerationProgress.svelte pattern.
-
-## What's Assumed
-
-- Moonshine v2 Small quality (7.84% WER) is acceptable for dictation — Risk if wrong: Medium
-- WebView MediaRecorder API works reliably for audio capture — Risk if wrong: Medium (fallback: native AudioRecord)
-- Both models fit in RAM on target devices (16 GB Pixel 9 Pro) — Risk if wrong: Low
-
-## Key References
-
-- **Source spec:** `docs/EXPANSION-PLAN-OPEN-MOBILE-VOICE.md`, sections "Speech-to-Text" and "Architecture"
-- **Decision:** [001-moonshine-over-whisper.md](../decisions/001-moonshine-over-whisper.md)
+The next comparison is the current v1 Base baseline against Moonshine v2
+Streaming Small and Medium. Multilingual controls may include whisper.cpp Base
+and Omnilingual ASR, but they are optional comparison tiers, not promised
+replacements. Selection requires common audio, WER/CER, endpoint latency,
+partial stability, RAM, disk, battery, and thermal evidence. See
+[the benchmark harness](../../benchmarks/README.md) and
+[model provenance](../MODEL_PROVENANCE.md).
 
 ## Status
 
-🔵 Not Started
+🟡 Experimental and implemented. Real desktop inference and Android emulator
+health have passed. A fresh Android download/resume cycle, representative
+recordings, and physical-device quality/performance acceptance remain open.

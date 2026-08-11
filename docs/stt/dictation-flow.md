@@ -1,74 +1,58 @@
 # Dictation Flow
 
-## Who
+## Happy path
 
-A user who wants to speak into their phone or computer and get editable text.
+1. The user opens Generate and taps the microphone action.
+2. The browser or Android WebView requests microphone permission when needed.
+3. Recording begins and the interface shows an active recording state.
+4. The user stops recording.
+5. The client uploads the captured audio to `/api/stt/transcribe` on the local
+   FastAPI or NanoHTTPD server.
+6. Moonshine v1 Base English INT8 performs batch transcription.
+7. The returned text is inserted into the editable text area.
+8. The user can correct, export, or synthesize the text.
 
-## The Happy Path
+No cloud request or LLM correction is part of this flow.
 
-1. User is on the Generate tab with an empty (or existing) text area
-2. User taps the **mic button**
-3. App checks microphone permission
-   - If not granted: Android runtime permission dialog appears → user grants
-   - If already granted: skip to step 4
-4. Text area transforms into **recording view** — shows waveform/audio level indicator and a stop button
-5. User speaks naturally
-6. User taps **stop**
-7. Audio blob is created via WebView MediaRecorder API
-8. Audio is POSTed to `/api/stt/transcribe` (NanoHTTPD on Android, FastAPI on desktop)
-9. **Progress indicator** appears (reuses GenerationProgress.svelte pattern) — "Transcribing..." with estimated time based on audio duration
-10. Moonshine processes the audio batch and returns transcribed text
-11. Transcribed text appears in the text area, **fully editable**
-12. User can now: edit the text, export it (PDF/MD/TXT), or generate speech from it
+## Optional model setup
 
-## What Could Go Wrong
+If the STT model is absent, Settings shows the exact 239.2 MiB download instead
+of blocking Android first run. Desktop starts a checksum-pinned background
+install. Android enqueues unique WorkManager work with a notification,
+progress, retry, pause, and partial-file resume when supported. The mic remains
+unavailable until the required files pass validation.
 
-### Microphone permission denied
-- **When:** User denies the runtime permission dialog (Android) or browser permission prompt (desktop)
-- **What happens:** Mic button shows a brief error message: "Microphone access required for dictation"
-- **Recovery:** User can tap mic again → permission dialog reappears. On Android, if "Don't ask again" was checked, direct user to Settings.
+## Failure and recovery
 
-### STT model not downloaded
-- **When:** User taps mic but Moonshine model hasn't been downloaded yet (e.g., first launch, download was interrupted)
-- **What happens:** App shows a prompt: "Speech-to-text model required. Download now? (~100 MB)"
-- **Recovery:** User taps download → model downloads with progress → mic becomes available
+- **Permission denied:** explain that microphone access is required. A permanent
+  Android denial still needs a direct link to system app settings.
+- **Model absent:** link the user to Settings without starting an implicit large
+  download.
+- **Download interrupted:** retain the app-private partial archive and resume on
+  explicit retry when the server supports ranges.
+- **No speech:** do not replace the current text with an empty transcript.
+- **Noisy or accented audio:** return the result for manual editing; do not hide
+  uncertainty behind automatic rewriting.
+- **Long audio:** Android rejects inputs over 15 minutes or 256 MiB and runs
+  Moonshine in overlapping 25-second windows. Desktop and device performance
+  acceptance remain separate.
 
-### Very long recording (>5 minutes)
-- **When:** User records a long dictation session
-- **What happens:** Recording continues normally. Transcription takes proportionally longer — progress indicator shows estimated time.
-- **Recovery:** No special handling needed. Moonshine processes batch after recording stops.
+## Acceptance status
 
-### WebView MediaRecorder fails
-- **When:** WebView's MediaRecorder API is unavailable or produces corrupt audio on certain Android versions
-- **What happens:** Mic button shows error: "Recording failed. Try again."
-- **Recovery:** Retry. If persistent, fall back to native `AudioRecord` via JS-native bridge (see [unknowns.md](../unknowns.md) — WebView MediaRecorder reliability).
-
-### Background noise / poor audio quality
-- **When:** User records in a noisy environment
-- **What happens:** Transcription completes but with lower accuracy (higher WER)
-- **Recovery:** User manually edits the transcribed text. No automatic correction (per [decision 002](../decisions/002-no-llm-transcript-correction.md)).
-
-### App backgrounded during transcription
-- **When:** User switches apps while Moonshine is processing
-- **What happens:** On Android, transcription continues on the native side (SttManager runs on IO dispatcher). On desktop, server-side processing continues.
-- **Recovery:** When user returns, result is displayed.
-
-## Acceptance Criteria
-
-- [ ] Tapping mic button requests microphone permission if not already granted
-- [ ] Recording view shows visual feedback (waveform or audio level indicator)
-- [ ] Stop button ends recording and triggers transcription
-- [ ] Progress indicator shows during transcription with time estimate
-- [ ] Transcribed text appears in the text area and is immediately editable
-- [ ] Mic button is disabled during active TTS generation (no conflicts)
-- [ ] Transcription works with Moonshine v2 Small on Android (~148ms latency per chunk)
-- [ ] Transcription works with Moonshine v2 Medium on desktop
-- [ ] Error state shown if mic permission is denied
-- [ ] Error state shown if STT model is not downloaded
-- [ ] Recording of 30+ seconds produces reasonable transcript (WER < 10% in quiet environment)
+- [x] Model absence is reported through the shared UI.
+- [x] The current model identity and size are reported truthfully.
+- [x] Desktop transcription works with the pinned Moonshine v1 archive.
+- [x] Android exposes native recording/transcription endpoints and model status.
+- [ ] Permanent Android permission denial opens system app settings.
+- [ ] Silence and minimum-duration behavior are explicitly tested.
+- [ ] A 30-second quiet recording passes a representative accuracy review.
+- [x] Android has explicit duration/source-size bounds and windowed inference.
+- [ ] Five- and 15-minute recordings pass memory/cancellation acceptance on a
+  target phone.
+- [ ] Fresh-download and transcription acceptance passes on a physical phone.
 
 ## Related
 
-- See: [STT Overview](stt-overview.md) for model details and API endpoints
-- See: [Unified Input](../unified-input/unified-input-overview.md) for how mic button fits into the Generate tab
-- Depends on: Android microphone permission in AndroidManifest.xml, WebView `onPermissionRequest` override
+- [STT overview](stt-overview.md)
+- [STT edge cases](edge-cases.md)
+- [Decision 002: no LLM transcript correction](../decisions/002-no-llm-transcript-correction.md)

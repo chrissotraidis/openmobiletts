@@ -1,6 +1,10 @@
 # Python
 __pycache__/
 *.py[cod]
+
+# Local benchmark results and private evaluation media
+benchmarks/results/
+benchmarks/private/
 *$py.class
 *.so
 .Python
@@ -41,7 +45,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 

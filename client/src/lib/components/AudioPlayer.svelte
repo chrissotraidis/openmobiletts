@@ -42,7 +42,7 @@
 		const grip = e.currentTarget;
 		grip.setPointerCapture(e.pointerId);
 		grip.onpointermove = handleDragMove;
-		grip.onpointerup = (ev) => { handleDragEnd(ev); grip.onpointermove = null; grip.onpointerup = null; };
+		grip.onpointerup = () => { handleDragEnd(); grip.onpointermove = null; grip.onpointerup = null; };
 	}
 
 	function handleDragMove(e) {
@@ -470,11 +470,12 @@
 <!-- Queue Panel (slides up above the player bar) -->
 {#if showQueue && hasQueue}
 	<!-- Backdrop to dismiss queue on tap outside -->
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div
+	<button
+		type="button"
+		aria-label="Close queue"
 		class="fixed inset-0 z-[28] bg-black/30"
 		onclick={() => showQueue = false}
-	></div>
+	></button>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		bind:this={queuePanelEl}
@@ -488,10 +489,9 @@
 		onpointercancel={handleDragEnd}
 	>
 		<!-- Swipe handle — drag down to close, swipe up or tap to expand to full-screen queue -->
-		<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-		<div class="flex justify-center pt-3 pb-1 cursor-pointer" onclick={() => { if (queueWasSwiped) return; showQueue = false; expanded = true; showExpandedQueue = true; hasAnimatedIn = false; }}>
+		<button type="button" aria-label="Expand queue" class="flex justify-center pt-3 pb-1 cursor-pointer w-full" onclick={() => { if (queueWasSwiped) return; showQueue = false; expanded = true; showExpandedQueue = true; hasAnimatedIn = false; }}>
 			<div class="w-10 h-1 bg-white/20 rounded-full"></div>
-		</div>
+		</button>
 		<div class="px-4 py-2 flex items-center justify-between border-b border-white/5">
 			<div class="flex items-center gap-2">
 				<ListMusic size={14} class="text-blue-400" />
@@ -572,11 +572,12 @@
 
 <!-- Compact Player Bar -->
 {#if isVisible}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="fixed bottom-[72px] md:bottom-0 left-0 md:left-64 right-0 z-30 bg-[#0d1117]/95 backdrop-blur-md border-t border-white/5"
 		style="touch-action: manipulation"
 		onclick={openExpanded}
+		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') openExpanded(e); }}
 		ontouchstart={handleCompactTouchStart}
 		ontouchend={handleCompactTouchEnd}
 	>
@@ -595,9 +596,10 @@
 			</div>
 		{:else}
 			<!-- Progress Bar (clickable for playback, animated for generation) -->
-			<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-			<div
-				class="h-1 bg-white/5 cursor-pointer group"
+			<button
+				type="button"
+				aria-label="Seek audio"
+				class="block w-full h-1 bg-white/5 cursor-pointer group"
 				data-no-expand
 				onclick={handleSeek}
 			>
@@ -612,7 +614,7 @@
 						style="width: {progress}%"
 					></div>
 				{/if}
-			</div>
+			</button>
 
 			<div class="px-4 py-2.5 flex items-center gap-3">
 				<!-- Play/Pause -->

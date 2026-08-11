@@ -1,56 +1,95 @@
 # Project Status
 
-**Last Updated:** 2026-03-28
-**Current Version:** v2.0.0 (production)
-**Next Version:** v3.0.0 (in development — Phases 1-4 implemented)
+**Last updated:** 2026-08-11
 
-## Feature Status
+**Baseline:** working tree based on `main` at
+`d8fea88248531dfd0d320d5f4107fe263525da2e`
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| [TTS](tts/tts-overview.md) | 🟢 Implemented | Core TTS fully working on both platforms |
-| [Document Import](document-import/document-import-overview.md) | 🟢 Implemented | PDF/DOCX/TXT/MD extraction working |
-| [Audio Playback](audio-playback/audio-playback-overview.md) | 🟢 Implemented | Player, queue, history, highlighting all working |
-| [Android App](android-app/android-app-overview.md) | 🟢 Implemented | WebView + Sherpa-ONNX, job recovery, notifications |
-| [STT](stt/stt-overview.md) | 🟡 In Progress | Backend + API done, needs StorageSettings UI |
-| [Document Export](document-export/document-export-overview.md) | 🟡 In Progress | Backend + API + UI done (inline in TextInput) |
-| [Audio Import](audio-import/audio-import-overview.md) | 🟡 In Progress | AudioDecoder + upload routing done |
-| [Batch Transcription](batch-transcription/batch-transcription-overview.md) | 🟡 In Progress | Batch ZIP export with background status polling; speaker diarization planned separately |
-| [Project Storage](project-storage/project-storage-overview.md) | 🟡 In Progress | CRUD + cleanup done, needs StorageSettings UI |
-| [Unified Input](unified-input/unified-input-overview.md) | 🟡 In Progress | Mic button + export picker done in TextInput |
-| [Multi-Language](multi-language/multi-language-overview.md) | 🔵 Not Started | 9-language TTS, planned |
+**Release state:** active modernization; no published Android release is
+claimed
 
-## v3.0 Implementation Phases
+## Current verification
 
-| Phase | Goal | Status |
-|-------|------|--------|
-| Phase 1: Foundation | Moonshine STT end-to-end on Android | 🟢 Complete |
-| Phase 2: STT UI + Audio Import | Mic button, audio decoder, file import | 🟢 Complete |
-| Phase 3: Export + Projects | PDF/MD/TXT export, project storage | 🟢 Complete |
-| Phase 4: Desktop Parity | Python STT, export, project storage | 🟢 Complete |
-| Phase 5: Polish + Testing | Testing, UI polish, docs | 🟡 In Progress |
-| Phase 6: Batch Transcription | Multi-file audio upload, Markdown ZIP export, diarization follow-up | 🟡 In Progress |
+| Check | Result | Boundary |
+|---|---|---|
+| Local app | Pass | `127.0.0.1:8000/api/health` reports Open Mobile TTS `3.1.0-dev` |
+| Desktop TTS | Pass | Real framed audio/timing response; current listening quality not re-accepted |
+| Desktop STT | Pass | Pinned Moonshine v1 Base archive installed, smoke-loaded, and transcribed locally |
+| Server tests | 58 passed | 7 dependency deprecation warnings |
+| Client diagnostics | Pass | 0 errors and 0 warnings |
+| Client production build | Pass | Current categorized Settings/client build generated |
+| Benchmark harness | Pass | TTS/STT runners compile; one Mac Kokoro HTTP baseline validates measurement, not model selection |
+| Android strict compile | Pass | WorkManager 2.10.5 and current shared client compile under strict dependency verification |
+| Android debug APK | Pass | Current OMTTS-label/continuous-model-switch build is 142,626,776 bytes, v2 debug-signed, and strict-verified; SHA-256 `4b29f75e211160ff5c07d5bef12fb7e4071e9610a3f697b027e5bea07db71455` |
+| Android unsigned release target | Pass, not a release | Current strict-verified target is 138,443,539 bytes with SHA-256 `c0664f3905ee65b75944eab76149a569be93c975d421296dd1a2fe7d68a86cc3`; it remains unsigned and unpublished |
+| Android emulator | Pass, bounded | API 34 ARM64 in-place updates preserved prior data; Pixel Launcher renders the full OMTTS label; real Kitten generation/Kokoro rollback and the continuous selected-model transition passed |
+| Android physical phone | Pass, bounded | Pixel 9 Pro XL exposed and then passed the process-isolation fix: Kokoro, Mini, Micro, and Kokoro again produced full-duration 24 kHz jobs; final in-place APK kept every model and Kokoro active; listening acceptance remains with the owner |
+| iOS/iPadOS | Planned | No app implementation exists |
 
-## Documentation Coverage
+## Feature truth
 
-| Feature | Overview | Flows | Edge Cases | Acceptance Criteria |
-|---------|----------|-------|------------|---------------------|
-| TTS | Thorough | — | — | — |
-| Document Import | Moderate | — | — | — |
-| Audio Playback | Thorough | queue-and-history-flow.md | — | Yes (existing) |
-| Android App | Thorough | model-download-flow.md | — | Yes (partial v3.0) |
-| STT | Thorough | dictation-flow.md | edge-cases.md | Yes |
-| Batch Transcription | Moderate | batch-export-flow.md | edge-cases.md | Yes |
-| Document Export | Thorough | export-flow.md | edge-cases.md | Yes |
-| Audio Import | Thorough | import-flow.md | edge-cases.md | Yes |
-| Project Storage | Thorough | project-lifecycle-flow.md | edge-cases.md | Yes |
-| Unified Input | Moderate | mic flow (in overview) | edge-cases.md | — |
-| Multi-Language | Moderate | — | — | — |
+| Feature | Status | Current boundary |
+|---|---|---|
+| Desktop Kokoro TTS | 🟡 Working baseline | Implicit first model download; browser buffers full audio before playback |
+| Android TTS | 🟡 Stable plus experiments | Kokoro remains first-run/default; optional Kitten Mini/Micro install and persist; every model change restarts into one clean sherpa engine per process and the full physical model cycle passed |
+| Desktop STT | 🟡 Experimental | Truthful Moonshine v1 Base English INT8 and pinned installer |
+| Android STT | 🟡 Experimental/optional | Explicit Settings download; WorkManager progress, retry, pause, and partial resume implemented |
+| Document/audio import | 🟡 Bounded baseline | Android rejects inputs over 15 minutes/256 MiB and windows Moonshine input; representative memory/device acceptance remains |
+| Batch transcription | 🟡 Desktop-only | Hidden on Android through the capability contract |
+| Export | 🟡 Implemented | Desktop PDF verified; Android share and cross-platform PDF rendering need device review |
+| Player/History/queue | 🟡 Working | Visible History is client-owned; manual assistive-tech/storage tests remain |
+| Data management | 🟡 Implemented baseline | Versioned History backup/restore, retention, and cached-audio cleanup; no audio in JSON backup |
+| Settings | 🟡 Redesigned slice | Voice, Connection, Models, Data, and App categories; required TTS and optional STT setup are explicit; Android model switching preserves section/card context across its clean restart |
+| PWA | 🔴 Not supported | Service worker disables itself; a local Python/native backend is required |
+| Android release | 🟡 Source build accepted | Debug build, physical Pixel update, model preservation, generation, transition, and launcher label pass; release signing and artifact publication remain |
 
-## Check History
+## Modernization phases
 
-| Date | Aligned | Drifted | Gaps | Notes |
-|------|---------|---------|------|-------|
-| 2026-03-16 | 42 | 6 | 5 | First check after Phases 1-4 implementation. 5 features status drift (code written, docs said Not Started). ModelManager.kt naming drift. Missing: StorageSettings.svelte, /api/stt/models/download, history card expansion. |
-| 2026-03-16 (device test) | — | — | — | First Android emulator test. 5 bugs found: wrong STT model URL (critical), missing MODIFY_AUDIO_SETTINGS permission (critical), Generate tab text persistence, dropdown dismiss behavior, no STT download button. 1 feature request: remote VPS connection. See unknowns.md for details. |
-| 2026-03-28 | 38 | 8 | 4 | Model size drift (95→350 MB), voice count (11→53), upload limit (10→100 MB), poll interval (5→2s), version string inconsistency, STT model naming, stale overview.md. BUG-2/BUG-3 resolved since last check. |
+| Phase | Status | Evidence / next gate |
+|---|---|---|
+| Phase 0: truth and reproducibility | 🟡 Near exit | Shared catalog, locks, safety defaults, model truth, CI definitions, capability contract, license/repo baseline and native activation smoke done; interrupted-download/device acceptance remains |
+| Phase 1: measured model bake-off | 🟡 Harness started | Current Kokoro Mac baseline recorded; Kitten Mini/Micro are functionally integrated as opt-in Android experiments without comparative performance claims |
+| Phase 2: product architecture | 🟡 Partial | Capability contract and visible data ownership resolved; bounded inference/long-audio work remains |
+| Phase 3: shared UI | 🟡 Partial | Settings navigation and checker-visible accessibility done; broader visual direction and manual device/assistive-tech QA remain |
+| Phase 4: brand/repository/Android release | 🟡 Source pass complete | Icon family, OMTTS launcher label, physical screenshots, public README, docs/license/templates, final debug build, and phone evidence pass; signed artifact publication remains |
+| Phase 5: iOS | 🔵 Planned | Runtime/transport decisions follow shared model/device evidence |
+
+## Phase Zero gates
+
+- [x] One product name/version source across server, client, and Android.
+- [x] Current models report exact family, precision, language, and measured size.
+- [x] Desktop STT installs from Settings with pinned integrity validation.
+- [x] Loopback and metadata-only logs are safe defaults.
+- [x] Hash-locked Python, tracked npm lock, deterministic UI build, and CI definitions.
+- [x] Android uses version-locked sherpa Kotlin/JNI and generated web assets.
+- [x] Desktop/Android publish the same schema-v1 capability shape.
+- [x] Client diagnostics pass with 0 errors and 0 warnings.
+- [x] Active README/feature docs no longer advertise unsupported PWA,
+  multilingual, release, model, or progressive-playback behavior.
+- [x] Repository Apache-2.0 grant and model/runtime provenance ledger exist.
+- [x] Complete current archive/per-voice document review; models remain runtime
+  downloads and missing upstream per-voice manifests are explicit boundaries.
+- [x] Keep staged native load validation for STT; use integrity validation plus
+  clean-process functional generation for TTS (Decision 021).
+- [ ] Complete physical interrupted-download acceptance.
+
+## Remaining execution order
+
+1. Exercise fresh TTS, optional STT, pause/resume, retry, process death,
+   notification, and low-space states on an emulator/physical phone.
+2. Compare the now-integrated Kitten experiments and future STT candidates on
+   target devices only if a default/performance decision is needed; Kokoro
+   remains unchanged meanwhile.
+3. Finish manual assistive-technology/device QA and model/voice acceptance;
+   document-level provenance and emulator launcher-mask brand reviews now pass.
+4. Produce, sign, checksum, and publish a versioned Android release artifact
+   only after the remaining release checklist and hardware matrix are accepted.
+5. Begin the iOS shell only after the shared model/runtime choices are stable.
+
+## Current documents
+
+- [Modernization plan](PHASE_ZERO_MODERNIZATION_PLAN.md)
+- [Technical debt audit](TECH_DEBT_AND_MODERNIZATION_AUDIT.md)
+- [Model provenance](MODEL_PROVENANCE.md)
+- [Release checklist](RELEASE_CHECKLIST.md)
+- [Open decisions](unknowns.md)

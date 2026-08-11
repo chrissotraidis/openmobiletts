@@ -11,11 +11,13 @@ class OpenMobileTtsApp : Application() {
         private const val TAG = "OpenMobileTtsApp"
         const val CHANNEL_PROGRESS = "tts_progress"
         const val CHANNEL_COMPLETE = "tts_complete"
+        const val CHANNEL_MODEL_DOWNLOAD = "model_download"
         const val PORT = 8080
     }
 
     val ttsManager = TtsManager()
     val sttManager = SttManager()
+    private val modelDownloader by lazy { ModelDownloader(this) }
     var httpServer: TtsHttpServer? = null
         private set
 
@@ -27,11 +29,11 @@ class OpenMobileTtsApp : Application() {
     }
 
     fun isTtsModelDownloaded(): Boolean {
-        return ModelDownloader().isTtsModelDownloaded(filesDir)
+        return modelDownloader.isTtsModelDownloaded(filesDir)
     }
 
     fun isSttModelDownloaded(): Boolean {
-        return ModelDownloader().isSttModelDownloaded(filesDir)
+        return modelDownloader.isSttModelDownloaded(filesDir)
     }
 
     /** Legacy alias */
@@ -70,22 +72,9 @@ class OpenMobileTtsApp : Application() {
             AppLog.e(TAG, "Failed to list assets", e)
         }
 
-        // Pre-initialize STT engine on a background thread if model is downloaded.
-        // Uses a plain Thread (not runBlocking) to avoid blocking the main thread
-        // and risking an ANR during Application.onCreate.
-        if (isSttModelDownloaded() && !sttManager.isInitialized) {
-            Thread {
-                try {
-                    val sttModelDir = ModelDownloader().getSttModelDir(filesDir)
-                    kotlinx.coroutines.runBlocking {
-                        sttManager.init(sttModelDir)
-                    }
-                    AppLog.i(TAG, "STT engine pre-initialized (background)")
-                } catch (e: Exception) {
-                    AppLog.w(TAG, "STT pre-init failed (will retry lazily): ${e.message}")
-                }
-            }.start()
-        }
+        // STT is optional and can be much larger in memory than the original
+        // planning assumptions. TtsHttpServer initializes it lazily on the
+        // first transcription request (Decision 019).
 
         AppLog.i(TAG, "Starting TtsHttpServer on port $PORT...")
         try {
@@ -151,8 +140,17 @@ class OpenMobileTtsApp : Application() {
                 description = "Notifies when speech generation is complete"
             }
 
+            val modelDownloadChannel = NotificationChannel(
+                CHANNEL_MODEL_DOWNLOAD,
+                "Model Downloads",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shows progress while downloading on-device voice models"
+            }
+
             nm.createNotificationChannel(progressChannel)
             nm.createNotificationChannel(completeChannel)
+            nm.createNotificationChannel(modelDownloadChannel)
         }
     }
 
