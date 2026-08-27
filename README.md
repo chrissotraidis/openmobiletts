@@ -38,15 +38,17 @@ from an app-internal loopback server.
 
 | Option | Status | What to do |
 |---|---|---|
+| Android signed APK | **Preview available** | [Download v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk) and install it directly on Android 8.0 or newer. |
 | Desktop local web app | **Available now** | Clone the repository and run `python3 run.py`. |
-| Android local build | **Available now** | Build the verified debug APK with Android Studio or Gradle, then install it with ADB. The current build is exercised on a physical Pixel 9 Pro XL. |
-| Prebuilt signed APK / Play Store | **Not published** | No signed public Android release or store listing is currently advertised. |
+| Android source build | **Available now** | Developers can build the debug APK with Android Studio or Gradle. |
+| Play Store | **Not published** | The preview is distributed only through GitHub Releases. |
 | Browser-installed PWA | **Not supported** | The browser UI requires the local Python or Android backend. |
 | iPhone / iPad | **Planned** | No iOS or iPadOS application exists yet. |
 
-The source and build pipeline are ready for contributors and local use. A
-public Android release remains separate work because it needs release signing,
-artifact publication, and a wider hardware acceptance matrix.
+The signed Android APK is a public preview, not a stable or Play Store release.
+It has passed strict builds, emulator updates, and a physical Pixel 9 Pro XL
+model cycle. The wider low/mid-range hardware, fresh-download, background,
+interruption, and thermal matrix is still open.
 
 ## Get started on desktop
 
@@ -89,38 +91,28 @@ cache. It does not turn Open Mobile TTS into a hosted or authenticated service.
 
 ## Install on Android
 
-### Requirements
+### Install the signed APK
 
-- Android Studio with Android SDK/API 36 and build tools 36.0.0
-- JDK 17 or newer
-- Node.js 20 or 22 LTS
-- Android 8.0/API 26 or newer
-- USB debugging for command-line installation
+You need Android 8.0 or newer and at least 1.2 GB of free space for the app,
+downloaded model archive, verification, and staged installation.
 
-Clone the repository, then build from the tracked Gradle wrapper:
+1. On the Android device, download
+   **[open-mobile-tts-v3.1.0-preview.1.apk](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk)**.
+2. Open the downloaded APK from the browser or **Files** app.
+3. If Android asks, allow that browser or Files app to **Install unknown apps**.
+   This permission can be turned off again immediately after installation.
+4. Confirm **Install**, allow Play Protect to scan the APK if offered, then open
+   **OMTTS**.
 
-```sh
-git clone https://github.com/chrissotraidis/openmobiletts.git
-cd openmobiletts/android
-./gradlew :app:assembleDebug --dependency-verification strict
-```
+The release also includes a
+[SHA-256 checksum file](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk.sha256).
+The APK is signed with the project's dedicated release identity so future
+GitHub APKs can update it in place.
 
-The APK is written to:
-
-```text
-android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-Connect an Android device and install or update it in place:
-
-```sh
-adb devices
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-You can also open the `android/` directory in Android Studio, select a device,
-and press **Run**. In-place updates preserve downloaded models, History, and
-preferences when the application ID and signing identity remain unchanged.
+If Android reports **App not installed** and you previously built OMTTS from
+source, the old debug build has a different signing identity. Export a History
+backup if needed, uninstall the debug build, then install the GitHub APK.
+Uninstalling removes that installation's private models and local app data.
 
 ### First launch
 
@@ -130,13 +122,31 @@ preferences when the application ID and signing identity remain unchanged.
 3. Enter or dictate text, or upload a supported document.
 4. Choose a language and voice, then press **Generate**.
 5. Open the player or History to listen, seek, replay, and download audio.
-6. Open **Settings → Models** only if you want optional speech-to-text or an
+6. Open **Settings > Models** only if you want optional speech-to-text or an
    experimental compact voice model.
 
 Kokoro is the recommended Android voice model. Kitten Mini and Micro are
 smaller developer-preview experiments with noticeably less reliable output.
 They are optional, clearly labelled **Experimental**, and can be removed when
 inactive.
+
+### Build the debug APK from source
+
+Developers need Android Studio with Android SDK/API 36 and build tools 36.0.0,
+JDK 17 or newer, Node.js 20 or 22 LTS, and USB debugging for command-line
+installation.
+
+```sh
+git clone https://github.com/chrissotraidis/openmobiletts.git
+cd openmobiletts/android
+./gradlew :app:assembleDebug --dependency-verification strict
+adb devices
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+You can also open the `android/` directory in Android Studio, select a device,
+and press **Run**. Debug builds are for development and do not share the public
+APK's signing identity.
 
 See the complete [Android build and runtime guide](android/README.md) for model
 integrity, storage, architecture, and current test evidence.
@@ -257,7 +267,9 @@ cd ../android
 The current audited snapshot passes 58 server tests, the client production
 build, the Svelte type/accessibility checker with zero errors and warnings, and
 strict Android debug assembly. CI repeats the server/client checks on Python
-3.10-3.12 and builds both debug and unsigned release-target Android APKs.
+3.10-3.12. Ordinary Android CI builds debug and unsigned release targets;
+version tags use the separate signed-APK workflow and publish verified assets
+to GitHub Releases.
 
 ## Frequently asked questions
 

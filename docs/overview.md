@@ -16,7 +16,7 @@ benchmarked, and accepted on the supported platforms.
 | Surface | Current status | UI | Inference |
 |---|---|---|---|
 | Desktop/local web | Working development surface | SvelteKit served by FastAPI | Kokoro-82M/PyTorch TTS by default; optional sherpa-onnx TTS; Moonshine v1 Base INT8 STT |
-| Android | Reproducible source build and physical Pixel acceptance; no signed public release | Same SvelteKit UI in a WebView | Stable sherpa-onnx Kokoro TTS, optional experimental Kitten Mini/Micro TTS, and optional Moonshine v1 Base INT8 STT through JNI |
+| Android | Signed GitHub preview plus source build and physical Pixel acceptance; stable-release matrix remains open | Same SvelteKit UI in a WebView | Stable sherpa-onnx Kokoro TTS, optional experimental Kitten Mini/Micro TTS, and optional Moonshine v1 Base INT8 STT through JNI |
 | Browser-installed PWA | Not currently supported | Manifest exists, service worker disables itself | Requires the local backend and models |
 | iOS/iPadOS | Planned only | Not implemented | Not selected |
 

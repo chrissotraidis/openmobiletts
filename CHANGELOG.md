@@ -5,6 +5,10 @@ release yet.
 
 ## Unreleased
 
+No changes yet.
+
+## 3.1.0-preview.1 - 2026-08-27
+
 ### Changed
 
 - Corrected current STT identity to Moonshine v1 Base English INT8.
@@ -42,6 +46,8 @@ release yet.
   Android/iOS/web brand exports.
 - Strict debug and unsigned release-target Android assembly with release-lint
   dependency verification.
+- A tagged GitHub workflow that builds, verifies, signs, checksums, and publishes
+  the installable Android preview.
 - Physical Android generation and in-place preservation evidence for Kokoro,
   Kitten Mini, Kitten Micro, Moonshine, preferences, and model switching.
 - A complete public README with desktop/Android installation guides, current
@@ -50,7 +56,7 @@ release yet.
 
 ### Known boundaries
 
-- Android release signing, artifact publication, and the wider hardware matrix
-  are pending.
+- The wider low/mid-range hardware, fresh-download, background, interruption,
+  and thermal matrix remains pending before stable-release acceptance.
 - Genuine browser progressive playback is not implemented.
 - Final model bake-off and iOS implementation are pending.

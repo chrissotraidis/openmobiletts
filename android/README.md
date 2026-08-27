@@ -12,6 +12,26 @@ the app and across repository documentation.
 The packaged application label and API 34 Pixel Launcher rendering were both
 verified as `OMTTS`; the launcher no longer truncates the name.
 
+## Install the signed preview
+
+On Android 8.0 or newer, download
+[Open Mobile TTS v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk),
+open the APK, and allow the browser or Files app to **Install unknown apps** if
+Android prompts. The permission can be disabled again after installation.
+
+Allow at least 1.2 GB of free space. The APK does not contain model weights;
+first launch downloads and verifies the required 333.2 MiB Kokoro archive, then
+stages its roughly 382 MiB installed model in app-private storage.
+
+This signed build can receive future GitHub APK updates in place. A locally
+built debug APK uses a different signing identity. If a debug copy is already
+installed, export any needed History backup before uninstalling it; uninstalling
+also deletes its downloaded models and private app data.
+
+The APK is a preview rather than a stable or Play Store release. See the
+[main installation guide](../README.md#install-on-android) and published
+[checksum](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk.sha256).
+
 ## Build status
 
 A clean checkout can build the debug APK without copied source bindings, local
@@ -43,8 +63,9 @@ cd android
 Output: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 Android CI repeats this build and checks that the APK contains the Svelte entry
-page plus arm64 and x86_64 sherpa JNI libraries. This is a debug build pipeline,
-not a published or signed production release.
+page plus arm64 and x86_64 sherpa JNI libraries. Tagged versions use the
+separate release workflow, dedicated signing identity, signature/content audit,
+and GitHub Releases publication. Debug builds remain development-only.
 
 ## Current models
 
@@ -88,7 +109,7 @@ Both backends and Android assembly consume
 required paths, languages, and license notes no longer live in separate Python
 and Kotlin constants.
 
-Still open before release quality:
+Still open before stable-release quality:
 
 - add explicit repair/update actions beyond the current experimental-model
   download, activation, pause/resume, removal, and Kokoro rollback controls;

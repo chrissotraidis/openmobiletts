@@ -5,6 +5,22 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseKeystorePath = providers.environmentVariable("OMTTS_KEYSTORE_PATH")
+val releaseKeystorePassword = providers.environmentVariable("OMTTS_KEYSTORE_PASSWORD")
+val releaseKeyAlias = providers.environmentVariable("OMTTS_KEY_ALIAS")
+val releaseKeyPassword = providers.environmentVariable("OMTTS_KEY_PASSWORD")
+val releaseSigningValues = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val suppliedReleaseSigningValues = releaseSigningValues.count { it.isPresent }
+check(suppliedReleaseSigningValues == 0 || suppliedReleaseSigningValues == releaseSigningValues.size) {
+    "Release signing requires all OMTTS_KEYSTORE_* and OMTTS_KEY_* variables"
+}
+val hasReleaseSigning = suppliedReleaseSigningValues == releaseSigningValues.size
+
 android {
     namespace = "com.openmobiletts.app"
     compileSdk = 36
@@ -13,13 +29,27 @@ android {
         applicationId = "com.openmobiletts.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = 3010001
         versionName = rootProject.file("../VERSION").readText().trim()
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystorePath.get())
+                storePassword = releaseKeystorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
