@@ -1,27 +1,28 @@
 # Project Status
 
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-27
 
-**Baseline:** working tree based on `main` at
-`d8fea88248531dfd0d320d5f4107fe263525da2e`
+**Baseline:** signed release tag `v3.1.0-preview.1` at
+`ad643834a7c69632b4be8c68fdb53142cd60697e`
 
-**Release state:** active modernization; no published Android release is
-claimed
+**Release state:** signed Android preview published on GitHub; stable-release
+and Play Store acceptance remain open
 
 ## Current verification
 
 | Check | Result | Boundary |
 |---|---|---|
-| Local app | Pass | `127.0.0.1:8000/api/health` reports Open Mobile TTS `3.1.0-dev` |
+| Product version | Pass | Tagged source and the published Android manifest report `3.1.0-preview.1`; Android `versionCode` is `3010001` |
 | Desktop TTS | Pass | Real framed audio/timing response; current listening quality not re-accepted |
 | Desktop STT | Pass | Pinned Moonshine v1 Base archive installed, smoke-loaded, and transcribed locally |
 | Server tests | 58 passed | 7 dependency deprecation warnings |
 | Client diagnostics | Pass | 0 errors and 0 warnings |
 | Client production build | Pass | Current categorized Settings/client build generated |
 | Benchmark harness | Pass | TTS/STT runners compile; one Mac Kokoro HTTP baseline validates measurement, not model selection |
-| Android strict compile | Pass | WorkManager 2.10.5 and current shared client compile under strict dependency verification |
+| Android strict compile | Pass | WorkManager 2.10.5 and the shared client compile under strict dependency verification on local and clean GitHub runners |
+| [Android signed preview](https://github.com/chrissotraidis/openmobiletts/releases/tag/v3.1.0-preview.1) | Pass, preview | Public APK is 138,451,751 bytes; SHA-256 `978c5e1730758015d4bc2a60d54ac0bf844f45d7c039d52ce4a267a1ea5b39a0`; v2 signature certificate SHA-256 `386fa5cdb632e56b33ce6919af616b19841277bedda755fdb0a8297f510548a4` |
 | Android debug APK | Pass | Current OMTTS-label/continuous-model-switch build is 142,626,776 bytes, v2 debug-signed, and strict-verified; SHA-256 `4b29f75e211160ff5c07d5bef12fb7e4071e9610a3f697b027e5bea07db71455` |
-| Android unsigned release target | Pass, not a release | Current strict-verified target is 138,443,539 bytes with SHA-256 `c0664f3905ee65b75944eab76149a569be93c975d421296dd1a2fe7d68a86cc3`; it remains unsigned and unpublished |
+| Android CI targets | Pass | Clean Linux CI still builds and audits the debug APK plus unsigned release target without access to release secrets |
 | Android emulator | Pass, bounded | API 34 ARM64 in-place updates preserved prior data; Pixel Launcher renders the full OMTTS label; real Kitten generation/Kokoro rollback and the continuous selected-model transition passed |
 | Android physical phone | Pass, bounded | Pixel 9 Pro XL exposed and then passed the process-isolation fix: Kokoro, Mini, Micro, and Kokoro again produced full-duration 24 kHz jobs; final in-place APK kept every model and Kokoro active; listening acceptance remains with the owner |
 | iOS/iPadOS | Planned | No app implementation exists |
@@ -41,7 +42,7 @@ claimed
 | Data management | 🟡 Implemented baseline | Versioned History backup/restore, retention, and cached-audio cleanup; no audio in JSON backup |
 | Settings | 🟡 Redesigned slice | Voice, Connection, Models, Data, and App categories; required TTS and optional STT setup are explicit; Android model switching preserves section/card context across its clean restart |
 | PWA | 🔴 Not supported | Service worker disables itself; a local Python/native backend is required |
-| Android release | 🟡 Source build accepted | Debug build, physical Pixel update, model preservation, generation, transition, and launcher label pass; release signing and artifact publication remain |
+| Android release | 🟡 Signed preview published | Tagged APK, checksum, signature, packaged assets, physical Pixel debug cycle, and direct download pass; signed clean-install and wider stable matrix remain |
 
 ## Modernization phases
 
@@ -51,7 +52,7 @@ claimed
 | Phase 1: measured model bake-off | 🟡 Harness started | Current Kokoro Mac baseline recorded; Kitten Mini/Micro are functionally integrated as opt-in Android experiments without comparative performance claims |
 | Phase 2: product architecture | 🟡 Partial | Capability contract and visible data ownership resolved; bounded inference/long-audio work remains |
 | Phase 3: shared UI | 🟡 Partial | Settings navigation and checker-visible accessibility done; broader visual direction and manual device/assistive-tech QA remain |
-| Phase 4: brand/repository/Android release | 🟡 Source pass complete | Icon family, OMTTS launcher label, physical screenshots, public README, docs/license/templates, final debug build, and phone evidence pass; signed artifact publication remains |
+| Phase 4: brand/repository/Android release | 🟡 Preview published | Icon family, OMTTS label, screenshots, consumer install guide, stable signing identity, tagged workflow, checksum, and public APK pass; stable hardware/lifecycle matrix remains |
 | Phase 5: iOS | 🔵 Planned | Runtime/transport decisions follow shared model/device evidence |
 
 ## Phase Zero gates
@@ -82,8 +83,9 @@ claimed
    remains unchanged meanwhile.
 3. Finish manual assistive-technology/device QA and model/voice acceptance;
    document-level provenance and emulator launcher-mask brand reviews now pass.
-4. Produce, sign, checksum, and publish a versioned Android release artifact
-   only after the remaining release checklist and hardware matrix are accepted.
+4. Collect preview installation feedback and close the signed clean-install,
+   low/mid-device, background, interruption, and thermal gates before promoting
+   a stable release or pursuing Play Store distribution.
 5. Begin the iOS shell only after the shared model/runtime choices are stable.
 
 ## Current documents
@@ -92,4 +94,5 @@ claimed
 - [Technical debt audit](TECH_DEBT_AND_MODERNIZATION_AUDIT.md)
 - [Model provenance](MODEL_PROVENANCE.md)
 - [Release checklist](RELEASE_CHECKLIST.md)
+- [Signed Android preview decision](decisions/024-signed-android-github-preview.md)
 - [Open decisions](unknowns.md)

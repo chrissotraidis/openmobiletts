@@ -1,9 +1,10 @@
 # Release Checklist
 
 No release is ready until every applicable item is evidenced. A build alone is
-not release acceptance.
+not release acceptance. The signed GitHub preview is published with the stable
+acceptance gates below still explicitly open.
 
-## Current pre-release evidence
+## Current preview-release evidence
 
 - Locked server/client checks and strict Android dependency verification pass.
 - Debug and unsigned release-target APKs assemble with the built web entry,
@@ -13,15 +14,20 @@ not release acceptance.
 - The current debug APK also passed a physical Pixel 9 Pro XL in-place update,
   Kokoro/Kitten generation cycle, selected-model transition, and preservation
   readback.
-- Signing, fresh required-model downloads, physical STT acceptance, and the
-  wider hardware/background matrix remain open below.
+- Tag `v3.1.0-preview.1` produced a signed, aligned, installable APK from
+  `ad643834a7c69632b4be8c68fdb53142cd60697e`.
+- The public 138,451,751-byte asset and published checksum were downloaded back
+  and matched SHA-256
+  `978c5e1730758015d4bc2a60d54ac0bf844f45d7c039d52ce4a267a1ea5b39a0`.
+- Signed clean-install acceptance, fresh required-model downloads, physical STT,
+  and the wider hardware/background matrix remain open below.
 
 ## Source and CI
 
-- [ ] Version and release notes are current.
-- [ ] Server tests and client check/build pass from locked dependencies.
-- [ ] Android strict build and packaged web/JNI audits pass.
-- [ ] `git diff --check` passes and release source is committed/tagged.
+- [x] Version and release notes are current.
+- [x] Server tests and client check/build pass from locked dependencies.
+- [x] Android strict build and packaged web/JNI audits pass.
+- [x] `git diff --check` passes and release source is committed/tagged.
 
 ## Models and licenses
 
@@ -39,8 +45,8 @@ not release acceptance.
 
 ## Android acceptance
 
-- [ ] Signed release artifact is produced from the tagged source.
-- [ ] Artifact hash and package contents are recorded.
+- [x] Signed preview artifact is produced from the tagged source.
+- [x] Artifact hash, signature identity, and package contents are recorded.
 - [ ] Clean install, update with data/model preservation, and cold launch pass.
 - [ ] TTS/STT model download and hands-on playback/transcription pass on a
   selected physical low/mid phone and current reference phone.
@@ -51,4 +57,4 @@ not release acceptance.
 
 - [x] README screenshots and install instructions match the artifact.
 - [x] Security, contribution, license, acknowledgements, and provenance links work.
-- [ ] Release asset is downloadable and its checksum is published.
+- [x] Release asset is downloadable and its checksum is published.

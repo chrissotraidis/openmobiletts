@@ -70,8 +70,10 @@ window.
 
 ## Current status
 
-🟡 Reproducible debug baseline. Strict assembly, APK asset/JNI audit, emulator
-update, data-preservation readback, cold launch, and API health passed on
-2026-08-10. Fresh model delivery, hands-on playback, background/thermal tests,
-physical-phone preservation, release signing, and store distribution remain
-separate acceptance gates.
+🟡 Signed GitHub preview published. Version `v3.1.0-preview.1` is available
+with a public checksum; its downloaded APK, v2 signature, version manifest,
+web entry, shared model catalog, and arm64 JNI runtime were independently
+verified on 2026-08-27. Earlier emulator updates and the physical Pixel debug
+model cycle remain valid bounded evidence. Signed clean-install, fresh model
+delivery, hands-on playback/transcription, low/mid hardware, background,
+interruption, thermal, and store-distribution acceptance remain open.

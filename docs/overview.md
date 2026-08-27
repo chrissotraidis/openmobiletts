@@ -74,7 +74,7 @@ The active plan is [Phase Zero Modernization](PHASE_ZERO_MODERNIZATION_PLAN.md):
 2. run a measured TTS/STT model bake-off;
 3. unify platform contracts and user storage;
 4. redesign the shared UI and brand from selected visual references;
-5. produce a reproducible Android release path; and
+5. collect preview evidence and close the Android stable-release gates; and
 6. build iOS only after shared contracts are stable.
 
 The supporting evidence is in the
