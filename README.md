@@ -308,10 +308,11 @@ selected model during the transition and returns to the active card when ready.
 <details>
 <summary><strong>Where is the Android APK?</strong></summary>
 
-The repository currently provides a reproducible source build and CI artifacts,
-not a signed public release. Follow the Android instructions above to build and
-install a debug APK. A published APK must be release-signed and attached to a
-versioned GitHub release before the README will advertise it as a download.
+Download the signed Android preview and checksum from
+[v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/tag/v3.1.0-preview.1).
+This is a prerelease, not a stable or Google Play release. The required Kokoro
+model downloads during first-run setup. The Android instructions above remain
+available for building and installing a debug APK from source.
 </details>
 
 <details>
