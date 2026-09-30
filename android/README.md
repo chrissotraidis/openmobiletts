@@ -71,7 +71,7 @@ and GitHub Releases publication. Debug builds remain development-only.
 
 | Role | Model | Download | Installed planning size | Notes |
 |---|---|---:|---:|---|
-| TTS | `kokoro-multi-lang-v1_0` | 349,418,188 bytes (333.2 MiB) | 400,786,089 bytes (382.2 MiB measured) | 53-speaker package; app exposes 28 accepted English US/UK speakers |
+| TTS | `kokoro-multi-lang-v1_0` | 349,906,910 bytes (333.7 MiB) | 401,239,297 bytes (382.6 MiB measured) | 54-speaker package; app exposes 28 accepted English US/UK speakers |
 | TTS experimental | `kitten-mini-en-v0_8` | 67,547,594 bytes (64.4 MiB) | 99,550,582 bytes (94.9 MiB measured) | Optional English developer-preview model; eight voices |
 | TTS experimental | `kitten-micro-en-v0_8` | 44,423,643 bytes (42.4 MiB) | 62,667,538 bytes (59.8 MiB measured) | Optional smaller English developer-preview model; eight voices |
 | STT | `sherpa-onnx-moonshine-base-en-int8` | 250,807,309 bytes (239.2 MiB) | 287,755,667 bytes (274.4 MiB measured) | Moonshine v1 Base, English, INT8; not Moonshine v2 Medium |

@@ -28,6 +28,8 @@ jobs:
           cache-dependency-path: client/package-lock.json
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android API 36
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
