@@ -38,7 +38,7 @@ from an app-internal loopback server.
 
 | Option | Status | What to do |
 |---|---|---|
-| Android signed APK | **Preview available** | [Download v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk) and install it directly on Android 8.0 or newer. |
+| Android signed APK | **Preview available** | [Download v3.1.0-preview.2](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.2/open-mobile-tts-v3.1.0-preview.2.apk) and install it directly on Android 8.0 or newer. |
 | Desktop local web app | **Available now** | Clone the repository and run `python3 run.py`. |
 | Android source build | **Available now** | Developers can build the debug APK with Android Studio or Gradle. |
 | Play Store | **Not published** | The preview is distributed only through GitHub Releases. |
@@ -97,7 +97,7 @@ You need Android 8.0 or newer and at least 1.2 GB of free space for the app,
 downloaded model archive, verification, and staged installation.
 
 1. On the Android device, download
-   **[open-mobile-tts-v3.1.0-preview.1.apk](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk)**.
+   **[open-mobile-tts-v3.1.0-preview.2.apk](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.2/open-mobile-tts-v3.1.0-preview.2.apk)**.
 2. Open the downloaded APK from the browser or **Files** app.
 3. If Android asks, allow that browser or Files app to **Install unknown apps**.
    This permission can be turned off again immediately after installation.
@@ -105,7 +105,7 @@ downloaded model archive, verification, and staged installation.
    **OMTTS**.
 
 The release also includes a
-[SHA-256 checksum file](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk.sha256).
+[SHA-256 checksum file](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.2/open-mobile-tts-v3.1.0-preview.2.apk.sha256).
 The APK is signed with the project's dedicated release identity so future
 GitHub APKs can update it in place.
 
@@ -309,7 +309,7 @@ selected model during the transition and returns to the active card when ready.
 <summary><strong>Where is the Android APK?</strong></summary>
 
 Download the signed Android preview and checksum from
-[v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/tag/v3.1.0-preview.1).
+[v3.1.0-preview.2](https://github.com/chrissotraidis/openmobiletts/releases/tag/v3.1.0-preview.2).
 This is a prerelease, not a stable or Google Play release. The required Kokoro
 model downloads during first-run setup. The Android instructions above remain
 available for building and installing a debug APK from source.

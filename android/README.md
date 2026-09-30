@@ -15,7 +15,7 @@ verified as `OMTTS`; the launcher no longer truncates the name.
 ## Install the signed preview
 
 On Android 8.0 or newer, download
-[Open Mobile TTS v3.1.0-preview.1](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk),
+[Open Mobile TTS v3.1.0-preview.2](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.2/open-mobile-tts-v3.1.0-preview.2.apk),
 open the APK, and allow the browser or Files app to **Install unknown apps** if
 Android prompts. The permission can be disabled again after installation.
 
@@ -30,7 +30,7 @@ also deletes its downloaded models and private app data.
 
 The APK is a preview rather than a stable or Play Store release. See the
 [main installation guide](../README.md#install-on-android) and published
-[checksum](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.1/open-mobile-tts-v3.1.0-preview.1.apk.sha256).
+[checksum](https://github.com/chrissotraidis/openmobiletts/releases/download/v3.1.0-preview.2/open-mobile-tts-v3.1.0-preview.2.apk.sha256).
 
 ## Build status
 
