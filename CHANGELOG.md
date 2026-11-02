@@ -7,6 +7,16 @@ release yet.
 
 No changes yet.
 
+## 3.1.0-preview.3 - 2026-11-02
+
+### Fixed
+
+- The Kokoro voice download works again. Upstream repacked
+  `kokoro-multi-lang-v1_0.tar.bz2` under the same name on 26 Oct 2026, so its
+  size and SHA-256 no longer matched the pinned ones and every download stopped
+  with "Unexpected archive size" (#28). The contents are unchanged; the new
+  size and SHA-256 are pinned.
+
 ## 3.1.0-preview.1 - 2026-08-27
 
 ### Changed

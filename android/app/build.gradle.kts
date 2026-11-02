@@ -29,7 +29,7 @@ android {
         applicationId = "com.openmobiletts.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3010002
+        versionCode = 3010003
         versionName = rootProject.file("../VERSION").readText().trim()
     }
 
